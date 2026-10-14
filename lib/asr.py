@@ -21,6 +21,10 @@ import tempfile
 
 # ⭐ 必须在 import faster_whisper **之前**设好，否则它已经去连 HuggingFace 了
 os.environ.setdefault('HF_ENDPOINT', 'https://hf-mirror.com')
+# 模型缓存放本脚本所在目录（= 插件家）：默认的 ~/.cache 在本机拒绝写入
+os.environ.setdefault('HF_HOME', os.path.join(os.path.dirname(os.path.abspath(__file__)), '.hf-cache'))
+# HuggingFace 新版存储（Xet）国内镜像不代理 ⇒ 关掉它，走老 CDN 通道（否则 401）
+os.environ.setdefault('HF_HUB_DISABLE_XET', '1')
 
 
 def to_url(target: str) -> str:

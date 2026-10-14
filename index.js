@@ -621,10 +621,13 @@ export function apply(ctx, config) {
         if (code !== 0) { appendAsr('装包失败 —— 看上面的报错\n'); log('转写：装包失败'); return }
         // ⭐ 顺手把模型也下好（不然第一次跑那一轮会卡在下载上 ✗）；模型走 HuggingFace 国内镜像
         const model = String(cfg.asrModel || 'small')
-        appendAsr(`下 Whisper 模型「${model}」（走 ${hf}，几百 MB，只需要一次）…\n`)
+        // 模型缓存必须放进插件家：默认的 ~/.cache 在本机拒绝写入（2026-10-14 实测 WinError 5）
+        const hfHome = join(stateDir, '.hf-cache')
+        try { mkdirSync(hfHome, { recursive: true }) } catch { /* 建不了后面会给报错 */ }
+        appendAsr(`下 Whisper 模型「${model}」（缓存在 ${hfHome}，源 ${hf}，几百 MB，只需要一次）…\n`)
         const code2 = await spawnTo(py, ['-c',
-          'import sys;from faster_whisper import WhisperModel;WhisperModel(sys.argv[1], device="cpu", compute_type="int8");print("模型就绪")',
-          model], { sink: appendAsr, env: { HF_ENDPOINT: hf } })
+          'import os,sys;os.environ["HF_HUB_DISABLE_XET"]="1";from faster_whisper import WhisperModel;WhisperModel(sys.argv[1], device="cpu", compute_type="int8");print("模型就绪")',
+          model], { sink: appendAsr, env: { HF_ENDPOINT: hf, HF_HOME: hfHome, HF_HUB_DISABLE_XET: '1' } })
         appendAsr(`=== 结束（装包 exit ${code}，模型 exit ${code2}，asrReady=${existsSync(py)}）===\n`)
         log(`装转写依赖结束：exit=${code}/${code2}`)
       } catch (e) {
@@ -687,6 +690,8 @@ export function apply(ctx, config) {
       installing,
       // ── 本地转写那一套的状态（设置页要显示进度）──
       asrReady: existsSync(asrPython()),
+      // 模型下没下（免得界面写"就绪"、其实还得现下）
+      asrModelReady: (() => { try { return existsSync(join(stateDir, '.hf-cache', 'hub')) } catch { return false } })(),
       asrInstalling: installingAsr,
       asrLog: asrLogFile,
       asrTail: (() => { try { return readFileSync(asrLogFile, 'utf8').slice(-1400) } catch { return '' } })(),
