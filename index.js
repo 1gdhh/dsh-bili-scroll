@@ -46,6 +46,8 @@ export const Config = z.object({
   autoComment: z.boolean().default(false).extra('volatile', true),
   /** 本地转写（没字幕的视频用 Whisper 转；默认关，要下模型） */
   transcribe: z.boolean().default(false).extra('volatile', true),
+  /** 本地转写用哪个 Whisper 模型（tiny / base / small / medium） */
+  asrModel: z.string().default('small').extra('volatile', true),
   /** ⭐ 每轮最多发几条评论（每条里 @ 一次下面那个人） */
   commentPerRound: z.natural().default(1).extra('volatile', true),
   /** ⭐ 要 @ 谁（B站 昵称）；**留空 = 不发评论** —— 评论存在的意义就是 @ 那一下 */
@@ -89,7 +91,7 @@ export function apply(ctx, config) {
    *     ② **定时器回调里绝不让异常外冒**（见 tick）—— 未捕获异常会杀掉整个宿主进程。
    */
   const DEFAULTS = {
-    perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false,
+    perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '',
   }
   const normalize = (src, base) => {
@@ -394,7 +396,7 @@ export function apply(ctx, config) {
       + `然后读章程 ${duty}，按里面的要求刷一轮 B站，`
       + `把报告写到 ${join(outDir, `${dayKey()}.md`)}。`
       + `今天最多挑 ${cfg.perDay} 条；关键词${kws.length ? `用这些：${kws.join('、')}` : '用章程里的默认那几组'}。`
-      + `本地转写是${cfg.transcribe ? '开着的（没字幕可以转）' : '关着的（没字幕就跳过）'}；`
+      + `本地转写是${cfg.transcribe ? '开着的（没字幕就用家目录里的 asr.py 转，命令见章程）' : '关着的（没字幕就跳过）'}；`
       + `自动评论并 @ ${cfg.mentionName || '（还没填要 @ 谁）'} 是${cfg.autoComment && cfg.mentionName
         ? `开着的（每轮最多 ${cfg.commentPerRound} 条评论，每条在正文里纯文本 @ ${cfg.mentionName}，150 字内）`
         : '关着的（只写报告，别发评论）'}。`
@@ -559,6 +561,80 @@ export function apply(ctx, config) {
     c.on('error', (e) => { appendInstall(`起不来：${e?.message ?? e}\n`); resolve(1) })
   })
 
+  // ───────── 本地转写（ASR）：**独立环境**，别把主 venv 撑成 1GB ─────────
+  const asrDir = join(stateDir, '.venv-asr')
+  const asrLogFile = join(stateDir, 'asr-install.log')
+  const asrPython = () => join(asrDir, process.platform === 'win32' ? 'Scripts' : 'bin',
+    process.platform === 'win32' ? 'python.exe' : 'python')
+  const appendAsr = (s) => { try { appendFileSync(asrLogFile, String(s)) } catch { /* 日志写不了也不能炸 */ } }
+  let installingAsr = false
+
+  /** 找 uv：系统里的 → 插件家里下好的 → 自己下一份（给"两样都没有"的人）；主/转写两套安装共用 */
+  const resolveUv = async () => {
+    const bundled = join(stateDir, 'bin', process.platform === 'win32' ? 'uv.exe' : 'uv')
+    if (await haveUv()) return 'uv'
+    if (existsSync(bundled)) return bundled
+    appendInstall('这台机器上没有 uv —— 我下一份放进插件家目录（单文件、免管理员、约 15MB，只需要一次）…\n')
+    const got = await ensureUv({ dir: join(stateDir, 'bin'), log: appendInstall })
+    if (got) appendInstall('uv 已就位：' + got + '\n')
+    return got
+  }
+
+  /** 跟 spawnLogged 一样，但可以写进别的日志、可以带环境变量 */
+  const spawnTo = (cmd, args, { sink = appendInstall, env = null } = {}) => new Promise((resolve) => {
+    sink(`\n$ ${cmd} ${args.join(' ')}\n`)
+    let c
+    try {
+      c = spawn(cmd, args, { cwd: stateDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+        env: env ? { ...process.env, ...env } : process.env })
+    } catch (e) { sink(`起不来：${e?.message ?? e}\n`); return resolve(1) }
+    const w = (b) => sink(String(b))
+    c.stdout?.on('data', w)
+    c.stderr?.on('data', w)
+    c.on('exit', (code) => { sink(`\n--- exit ${code} ---\n`); resolve(code) })
+    c.on('error', (e) => { sink(`起不来：${e?.message ?? e}\n`); resolve(1) })
+  })
+
+  /** 装"本地转写"那一套：独立环境 + faster-whisper + yt-dlp + 先把 Whisper 模型下好 */
+  const runAsrInstall = () => {
+    if (installingAsr) return { ok: true, busy: true, log: asrLogFile, hint: '正在装转写依赖，别重复起' }
+    installingAsr = true
+    appendAsr(`\n=== ${new Date().toISOString()} 开始装"本地转写"依赖 ===\n`)
+    ;(async () => {
+      try {
+        const mirror = process.env.BILI_DUTY_PIP_MIRROR || 'https://pypi.tuna.tsinghua.edu.cn/simple'
+        const hf = process.env.BILI_DUTY_HF_ENDPOINT || 'https://hf-mirror.com'
+        const py = asrPython()
+        const uvCmd = await resolveUv()
+        if (!existsSync(py)) {
+          if (uvCmd) await spawnTo(uvCmd, ['venv', asrDir], { sink: appendAsr })
+          else await spawnTo(String(cfg.pythonPath || 'python'), ['-m', 'venv', asrDir], { sink: appendAsr })
+        }
+        if (!existsSync(py)) {
+          appendAsr('建环境失败 —— 先点上面的「装依赖」，把 uv 或 Python 准备好\n')
+          log('转写：建环境失败'); return
+        }
+        appendAsr('装 faster-whisper + yt-dlp（走国内镜像）…\n')
+        let code = 1
+        if (uvCmd) code = await spawnTo(uvCmd, ['pip', 'install', '--python', py, '-i', mirror, 'faster-whisper', 'yt-dlp'], { sink: appendAsr })
+        if (code !== 0) code = await spawnTo(py, ['-m', 'pip', 'install', '-i', mirror, 'faster-whisper', 'yt-dlp'], { sink: appendAsr })
+        if (code !== 0) { appendAsr('装包失败 —— 看上面的报错\n'); log('转写：装包失败'); return }
+        // ⭐ 顺手把模型也下好（不然第一次跑那一轮会卡在下载上 ✗）；模型走 HuggingFace 国内镜像
+        const model = String(cfg.asrModel || 'small')
+        appendAsr(`下 Whisper 模型「${model}」（走 ${hf}，几百 MB，只需要一次）…\n`)
+        const code2 = await spawnTo(py, ['-c',
+          'import sys;from faster_whisper import WhisperModel;WhisperModel(sys.argv[1], device="cpu", compute_type="int8");print("模型就绪")',
+          model], { sink: appendAsr, env: { HF_ENDPOINT: hf } })
+        appendAsr(`=== 结束（装包 exit ${code}，模型 exit ${code2}，asrReady=${existsSync(py)}）===\n`)
+        log(`装转写依赖结束：exit=${code}/${code2}`)
+      } catch (e) {
+        appendAsr(`装转写依赖崩了：${e?.stack ?? e}\n`)
+        log(`装转写依赖崩了：${e?.message ?? e}`)
+      } finally { installingAsr = false }
+    })()
+    return { ok: true, started: true, log: asrLogFile, hint: '正在后台装转写依赖 —— 进度显示在下面（要下几百 MB 模型，慢一点正常）' }
+  }
+
   const runInstall = () => {
     if (installing) return { ok: true, busy: true, log: installLogFile, hint: '正在装，别重复起' }
     installing = true
@@ -569,16 +645,7 @@ export function apply(ctx, config) {
         const mirror = process.env.BILI_DUTY_PIP_MIRROR || 'https://pypi.tuna.tsinghua.edu.cn/simple'
         const venvPy = venvPython()
         const py = String(cfg.pythonPath || 'python')
-        // ⭐ 先确定"用哪个 uv"：系统里的 → 家里下好的 → **自己下一份**（给"两样都没有"的人）
-        let uvCmd = null
-        const bundledUv = join(stateDir, 'bin', process.platform === 'win32' ? 'uv.exe' : 'uv')
-        if (await haveUv()) uvCmd = 'uv'
-        else if (existsSync(bundledUv)) uvCmd = bundledUv
-        else {
-          appendInstall('这台机器上没有 uv —— 我下一份放进插件家目录（单文件、免管理员、约 30MB，只需要一次）…\n')
-          const got = await ensureUv({ dir: join(stateDir, 'bin'), log: appendInstall })
-          if (got) { uvCmd = got; appendInstall('uv 已就位：' + got + '\n') }
-        }
+          const uvCmd = await resolveUv()   // ⭐ 系统里的 → 家里下好的 → 自己下一份
         if (!existsSync(venvPy) && !uvCmd && !(await probeCmd(py))) {
           const msg = '这台机器上没有 uv，也没有可用的 python（试过 "' + py + '"），而且我自动下 uv 也没成功'
             + '（大概是网络到不了 GitHub / PyPI 镜像）。⇒ 请手动装 uv（单个 exe：https://docs.astral.sh/uv/）'
@@ -618,6 +685,11 @@ export function apply(ctx, config) {
       loggedIn: hasCredential(),
       venvReady: existsSync(venvPython()),
       installing,
+      // ── 本地转写那一套的状态（设置页要显示进度）──
+      asrReady: existsSync(asrPython()),
+      asrInstalling: installingAsr,
+      asrLog: asrLogFile,
+      asrTail: (() => { try { return readFileSync(asrLogFile, 'utf8').slice(-1400) } catch { return '' } })(),
       installLog: installLogFile,
       // ⭐ 让设置页能显示"装到哪了"（陌生人原来只看到一句"后台在装" ✗）
       installTail: (() => { try { return readFileSync(installLogFile, 'utf8').slice(-1400) } catch { return '' } })(),
@@ -637,7 +709,7 @@ export function apply(ctx, config) {
     if (req.method === 'POST' && path === '/api/bili-duty/config') {
       const body = await readBody(req)
       const patch = {}
-      for (const k of ['perDay', 'peakValley', 'noon', 'night', 'autoComment', 'transcribe',
+      for (const k of ['perDay', 'peakValley', 'noon', 'night', 'autoComment', 'transcribe', 'asrModel',
         'commentPerRound', 'mentionName',
         'keywords', 'pythonPath', 'dshBin', 'headlessProfile', 'workspace']) {
         if (k in body) patch[k] = body[k]
@@ -655,6 +727,11 @@ export function apply(ctx, config) {
     // 建 venv + 装依赖（**不等它**：几分钟的活，进度写 install.log）
     if (req.method === 'POST' && path === '/api/bili-duty/install') {
       return sendJson(res, 200, runInstall())
+    }
+
+    // 装"本地转写"那套（独立环境：faster-whisper + yt-dlp + Whisper 模型）
+    if (req.method === 'POST' && path === '/api/bili-duty/install-asr') {
+      return sendJson(res, 200, runAsrInstall())
     }
 
     // ── 扫码登录（设置页用）──

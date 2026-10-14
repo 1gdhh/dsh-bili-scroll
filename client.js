@@ -166,6 +166,16 @@ window.__ModuleLoader__.load({
         finally { setBusy('') }
       }
 
+      const onInstallAsr = async () => {
+        setBusy('asr')
+        say('')
+        try {
+          const r = await jpost('/install-asr', {})
+          say(r?.started ? '开始装转写依赖 —— 进度显示在下面（要下模型，慢一点正常）' : (r?.hint || '没起来'),
+            r?.started ? 'good' : 'warn')
+        } catch (e) { say(String(e?.message ?? e), 'warn') } finally { setBusy('') }
+      }
+
       const onInstall = async () => {
         setBusy('install')
         say('')
@@ -298,10 +308,22 @@ window.__ModuleLoader__.load({
             h('div', { 'data-bd-note': '' }, '留空的话它就不发评论了 —— 因为评论存在的意义就是 @ 那一下')) : null,
           h(ToggleRow, {
             label: '本地转写没字幕的视频',
-            note: '要在本机装 Whisper、下几百 MB 模型；默认关，没字幕的直接跳过',
+            note: '默认关；开了以后，没字幕的视频会在本机转写一遍（不花 API 钱）',
             on: sw('transcribe'),
             onChange: (v) => patch({ transcribe: v }, '本地转写'),
-          })),
+          }),
+          sw('transcribe') ? h('div', { 'data-bd-sub': '' },
+            h('div', { 'data-bd-row': '' },
+              h('button', { 'data-bd-btn': '', disabled: busy === 'asr', onClick: onInstallAsr },
+                st.asrReady ? '重装转写依赖' : '装转写依赖'),
+              h('div', { 'data-bd-note': '' }, st.asrReady ? '转写环境已就绪' : '还没装 —— 没装的话转写用不了')),
+            h('div', { 'data-bd-note': '' },
+              '点一下就好：建一个独立环境、装 faster-whisper + yt-dlp，并把 Whisper 模型也下好',
+              h('br'),
+              '（模型默认 small，几百 MB，走国内镜像；装一次就够了）'),
+            st.asrTail ? h('div', null,
+              h('div', { 'data-bd-note': '' }, st.asrInstalling ? '正在装转写依赖（进度）：' : '转写依赖的日志（末尾）：'),
+              h('pre', { 'data-bd-pre': '' }, st.asrTail)) : null) : null),
 
         /* ── 关注什么 / 在哪儿刷 ── */
         h('div', { 'data-bd-sec': '' },
