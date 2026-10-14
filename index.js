@@ -1,0 +1,686 @@
+/**
+ * dsh-bili-duty —— host 半端
+ * ============================================================================
+ * 它是什么：每天替你刷一轮 B站 的插件版。
+ *   1. **插件内部起那份 Python MCP**（`vendor/bilibili-mcp/mcp_server.py`），把它的能力
+ *      注册成 dsh 工具（搜 / 字幕 / 评论 / 发评论 @ 人 / 登录检查）—— 用户不用再手改 profile。
+ *   2. **谷时定时器**：中午 12:00–14:00、夜间 00:30–08:30（`lib/state.mjs` 里的 `WINDOWS`），
+ *      开了哪个窗口才在哪个窗口自动跑；「定量刷」的数字是**每天总量上限**。
+ *   3. **跑一轮** = 起一个 `dsh --profile headless <prompt>`（跟老方案同一条路，已被验证过），
+ *      把 `duty.md` 交给它，报告写进 `<家>/out/<日期>.md`。
+ *   4. **设置页**（`client.js`）通过 `/api/bili-duty/*` 读写配置、看状态、扫码登录。
+ *
+ * 家里（`$DSH_HOME/bili-duty/`）都有什么：`config.json` / `mcp_server.py`（从 vendor 铺过来，
+ * 这样凭证 `bili_credential.json` 落在家里而不是插件包里）/ `duty.md` / `out/` / `duty.log`。
+ * ============================================================================
+ */
+import z from '@deepseek-ai/schemastery'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import { spawn } from 'node:child_process'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { McpClient } from './lib/mcp.mjs'
+import { WINDOWS, stateDirOf, readJson, writeJson, ensureHomeFiles, inWindow, dayKey } from './lib/state.mjs'
+import { loginStart, loginPoll, saveCredential, renderQrPng } from './lib/login.mjs'
+
+export const name = 'bili-scroll'
+export const inject = ['webServer', 'tools', 'settings']
+
+/**
+ * 🔴 每个字段都要 `.extra('volatile', true)`：DSH 的 settings.update() 只认 volatile 字段
+ *    （`volatileForm(schema)`，见 dsh-settings），没有这个标记写设置时会抛
+ *    "Plugin entry … has no volatile fields"。另外两个条件是：
+ *    **loader entry 的 id 必须等于命名空间名**（我们 patch 里就是 `bili-duty`）+ **本模块导出 Config**。
+ */
+export const Config = z.object({
+  /** 定量刷：每天最多挑几条 */
+  perDay: z.natural().default(5).extra('volatile', true),
+  /** 峰谷自动刷（总开关） */
+  peakValley: z.boolean().default(false).extra('volatile', true),
+  /** 峰谷子开关：中午 / 晚上 */
+  noon: z.boolean().default(true).extra('volatile', true),
+  night: z.boolean().default(true).extra('volatile', true),
+  /** 自动评论 @ 使用者（默认关 —— 会拿用户的号说话，必须他自己开） */
+  autoComment: z.boolean().default(false).extra('volatile', true),
+  /** 本地转写（没字幕的视频用 Whisper 转；默认关，要下模型） */
+  transcribe: z.boolean().default(false).extra('volatile', true),
+  /** ⭐ 每轮最多发几条评论（每条里 @ 一次下面那个人） */
+  commentPerRound: z.natural().default(1).extra('volatile', true),
+  /** ⭐ 要 @ 谁（B站 昵称）；**留空 = 不发评论** —— 评论存在的意义就是 @ 那一下 */
+  mentionName: z.string().default('').extra('volatile', true),
+  /** 关注关键词（空了用章程里默认那几组） */
+  keywords: z.array(z.string()).default([]).extra('volatile', true),
+  /** Python：指向 venv 里的那个最好 */
+  pythonPath: z.string().default('python').extra('volatile', true),
+  /** dsh 的 bin.js（不填就试自动探测，再退化成 shell 里的 dsh） */
+  dshBin: z.string().default('').extra('volatile', true),
+  /** headless 那一轮用哪个 profile */
+  headlessProfile: z.string().default('headless').extra('volatile', true),
+  /** 给那一轮叠一份插件自己的 patch（把 B站 MCP 挂上）—— 用户 profile 一个字都不用改 */
+  overlayMcp: z.boolean().default(true).extra('volatile', true),
+  /** 跑 headless 时的工作目录 */
+  workspace: z.string().default('').extra('volatile', true),
+})
+
+export function apply(ctx, config) {
+  const pluginDir = dirname(fileURLToPath(import.meta.url))
+  const stateDir = stateDirOf(ctx)
+  const cfgFile = join(stateDir, 'config.json')
+  const logFile = join(stateDir, 'duty.log')
+  const outDir = join(stateDir, 'out')
+  mkdirSync(outDir, { recursive: true })
+
+  const log = (msg) => {
+    const line = `${new Date().toISOString()}  ${msg}`
+    try { appendFileSync(logFile, line + '\n', 'utf8') } catch { /* 日志写不进去也不致命 */ }
+    try { ctx.logger?.info?.(`[bili-duty] ${msg}`) } catch { /* 没有 logger 就算了 */ }
+  }
+
+  /**
+   * ⚠️ 2026-10-14 事故（第一次挂上就炸了整个 DSH，见当天的 lesson）：
+   *   `apply(ctx, config)` 传进来的那个 `config`，字段值**不保证是标量** —— 我们的 `config.pythonPath`
+   *   是个**对象**、`config.keywords` 也不是数组（日志里打成 `[object Object]`）。对象是"真值"，
+   *   于是 `if (!cfg.peakValley) return` 这类守卫全部失效，一路走到 `cfg.keywords.filter(...)`
+   *   抛 TypeError —— 而那是在**定时器回调**里，没人接 ⇒ **整个 dsh 进程被带走** ✗✗。
+   *   ⇒ 两条规矩：
+   *     ① 逐字段按默认值的类型挑一遍（拿不准就用默认值），再叠自己的 `config.json`；
+   *     ② **定时器回调里绝不让异常外冒**（见 tick）—— 未捕获异常会杀掉整个宿主进程。
+   */
+  const DEFAULTS = {
+    perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false,
+    keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '',
+  }
+  const normalize = (src, base) => {
+    const out = { ...base }
+    for (const k of Object.keys(base)) {
+      const v = src?.[k]
+      if (v === undefined || v === null) continue
+      if (Array.isArray(base[k])) { if (Array.isArray(v)) out[k] = v.filter((x) => typeof x === 'string') }
+      else if (typeof base[k] === 'number') { const n = Number(v); if (Number.isFinite(n)) out[k] = n }
+      else if (typeof base[k] === 'boolean') { if (typeof v === 'boolean') out[k] = v }
+      else if (typeof base[k] === 'string') { if (typeof v === 'string') out[k] = v }
+    }
+    return out
+  }
+  const cfg = normalize(readJson(cfgFile, {}), normalize(config, { ...DEFAULTS }))
+  const saveCfg = (patch) => { Object.assign(cfg, normalize(patch, cfg)); writeJson(cfgFile, cfg) }
+
+  ensureHomeFiles(pluginDir, stateDir, log)
+
+  /* ── 设置命名空间：让 DSH 自带的「插件设置」能编辑这份 Config ──
+   * 三个条件缺一不可（抄 qq-mode-console 的血泪注释）：
+   *   ① loader entry 的 id 必须**等于命名空间名** —— 我们 cordis.patch.yml 里就是 `bili-duty` ✓
+   *   ② 插件模块导出 `Config` ✓  ③ Config 里至少一个字段标 volatile ✓（我们都标了）
+   */
+  try {
+    if (typeof ctx.settings?.register === 'function') {
+      ctx.settings.register('bili-duty', Config, { base: {}, applies: 'live' })
+      log('已注册设置命名空间 bili-duty')
+    }
+  } catch (e) {
+    if (!/already registered/i.test(String(e?.message ?? e))) log(`注册设置命名空间失败：${e?.message ?? e}`)
+  }
+
+  /* ─────────────── MCP（内部起那个 Python MCP） ─────────────── */
+
+  let mcp = null
+  let mcpKey = ''
+  const mcpKeyNow = () => `${cfg.pythonPath}|${join(stateDir, 'mcp_server.py')}`
+
+  const ensureMcp = async () => {
+    if (mcp?.running && mcpKey === mcpKeyNow()) return mcp
+    if (mcp) { mcp.stop(); mcp = null }
+    const script = join(stateDir, 'mcp_server.py')
+    if (!existsSync(script)) throw new Error(`家里没有 mcp_server.py（应有 ${script}）—— 装上插件后重启一次 dsh 会自动铺好`)
+    mcpKey = mcpKeyNow()
+    mcp = new McpClient({
+      command: cfg.pythonPath || 'python',
+      args: [script],
+      cwd: stateDir,                     // 凭证落在家里 ✓
+      log,
+    })
+    return mcp
+  }
+
+  const call = async (toolName, args, opts) => {
+    const client = await ensureMcp()
+    return client.call(toolName, args, opts)
+  }
+
+  const hasCredential = () => existsSync(join(stateDir, 'bili_credential.json'))
+
+  /* ─────────────── 工具 ─────────────── */
+
+  const textOutput = {
+    schema: { type: 'object', properties: {}, additionalProperties: true },
+    render: (_args, value) => [{
+      type: 'text',
+      text: typeof value === 'string' ? value : JSON.stringify(value, null, 2),
+    }],
+  }
+
+  /**
+   * 工具返回值一律过一遍这里：**宿主只吃"无损 JSON"**，塞进去任何函数/循环引用/类实例都会报
+   * `value is not lossless JSON`（2026-10-14 第一次挂上就撞了一次）。
+   */
+  const safe = (v) => {
+    if (v === undefined || v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v
+    try { return JSON.parse(JSON.stringify(v)) } catch { return String(v) }
+  }
+
+  const tool = (spec) => ctx.tools.register(defineTool({
+    ...spec,
+    output: textOutput,
+    async execute(args, exec) { return safe(await spec.execute(args, exec)) },
+  }))
+
+  tool({
+    name: 'bili_whoami',
+    description: '看 B站 那边登录的是谁（凭证是否有效、昵称、mid）。第一次用要先在「刷B站」设置页里扫码登录。',
+    parameters: {},
+    async execute() {
+      if (!hasCredential()) {
+        return { ok: false, loggedIn: false, hint: '还没登录：去 dsh 设置页的「刷B站」里点「扫码登录」（凭证会存在插件自己的家目录里）' }
+      }
+      const r = await call('bili_check_credential', {})
+      return { ok: true, ...(typeof r === 'object' ? r : { raw: r }) }
+    },
+  })
+
+  tool({
+    name: 'bili_search',
+    description: '搜 B站 视频（可排序）。返回标题 / BV号 / 播放量 / UP / 时长 等。\n'
+      + '⚠️ 刷一轮的用法：搜近 7 天的、按播放或最新都行，然后**读字幕原文**再判断（别看摘要下结论）。',
+    parameters: {
+      keyword: { type: 'string', description: '搜索关键词' },
+      num: { type: 'number', description: '返回几条（默认 10，最大 50）' },
+      order: { type: 'string', description: 'totalrank=综合（默认）/ click=播放 / pubdate=最新 / dm=弹幕' },
+    },
+    async execute(args) {
+      return call('bili_search', {
+        keyword: String(args.keyword ?? ''),
+        num: Math.max(1, Math.min(Number(args.num) || 10, 50)),
+        order: String(args.order || 'totalrank'),
+      })
+    },
+  })
+
+  tool({
+    name: 'bili_subtitle',
+    description: '取一个视频的字幕（AI 字幕）全文。**判断内容就靠它** —— 没有字幕时，'
+      + '若设置里开了「本地转写」再想别的办法，否则直接跳过这条。',
+    parameters: { bvid: { type: 'string', description: 'BV号' } },
+    async execute(args) { return call('bili_subtitle', { bvid: String(args.bvid ?? '') }) },
+  })
+
+  tool({
+    name: 'bili_comments',
+    description: '取一个视频的热门评论（含点赞/回复数）。刷一轮时顺手翻一眼，看值不值得占用使用者一次注意力。',
+    parameters: {
+      bvid: { type: 'string', description: 'BV号' },
+      num: { type: 'number', description: '取几条（默认 30）' },
+    },
+    async execute(args) {
+      return call('bili_comments', { bvid: String(args.bvid ?? ''), num: Math.max(1, Number(args.num) || 30) })
+    },
+  })
+
+  tool({
+    name: 'bili_reply',
+    description: '在视频下发评论（或回复某条评论）。这就是"@ 本人"那一下：短、干净、纯文本 @ 写在正文里。\n'
+      + '🔴 安全闸：设置页的「自动评论并 @ 你」**默认是关的**；关着的时候这个工具会拒绝 —— '
+      + '除非本人当场让你发（那时传 force: true）。',
+    parameters: {
+      bvid: { type: 'string', description: 'BV号' },
+      text: { type: 'string', description: '评论正文（短、干净、纯文本 @；别写敏感词）' },
+      rpid: { type: 'number', description: '要回复的评论 id（0/不填 = 发新评论）' },
+      force: { type: 'boolean', description: '本人当场让你发的，传 true 越过"自动评论关着"的闸' },
+    },
+    async execute(args) {
+      if ((!cfg.autoComment || !cfg.mentionName) && !args.force) {
+        return {
+          ok: false,
+          blocked: true,
+          hint: '要发评论得同时满足两条：设置里开着「自动评论并 @ 你」、并且填了「要 @ 谁」。或者本人当场让你发时传 force: true。',
+        }
+      }
+      return call('bili_reply', {
+        bvid: String(args.bvid ?? ''),
+        text: String(args.text ?? ''),
+        rpid: Number(args.rpid) || 0,
+      })
+    },
+  })
+
+  tool({
+    name: 'bili_status',
+    description: '看它今天的状态：跑了没跑、挑了几条、额度剩多少、报告在哪、登录过没有、下次窗口什么时候开。',
+    parameters: {},
+    async execute() {
+      const st = readJson(join(stateDir, 'state.json'), {})
+      const now = new Date()
+      return {
+        ok: true,
+        today: dayKey(now),
+        ranToday: st.day === dayKey(now) ? Number(st.count || 0) : 0,
+        perDay: cfg.perDay,
+        windows: Object.fromEntries(Object.entries(WINDOWS).map(([k, w]) => [k, {
+          label: w.label, start: w.start, end: w.end,
+          switchOn: Boolean(cfg[k]),
+          opening: inWindow(now, w),
+        }])),
+        peakValley: cfg.peakValley,
+        autoComment: cfg.autoComment,
+        transcribe: cfg.transcribe,
+        loggedIn: hasCredential(),
+        home: stateDir,
+        report: join(outDir, `${dayKey(now)}.md`),
+      }
+    },
+  })
+
+  tool({
+    name: 'bili_run',
+    description: '**立刻跑一轮**（不等窗口）：起一个 headless 会话，把 duty.md 交给它去刷、写报告。'
+      + '适合"我现在就想看一份"的场合。',
+    parameters: {},
+    async execute() { const r = runDuty('manual'); return { ok: true, ...r } },
+  })
+
+  tool({
+    name: 'bili_login_start',
+    description: '开始 B站 扫码登录：出二维码（画成 PNG 存在插件家目录里，返回路径）和一个 key。\n'
+      + '用法：拿到 PNG 后用 `present` 把它推给本人（手机 B站 → 我的 → 扫一扫），再用 `bili_login_poll` 轮询。\n'
+      + '⚠️ 二维码大约 180 秒有效，出码要马上递过去；手机上确认时选「记住我」那种长期登录。',
+    parameters: {},
+    async execute() {
+      const { key, url } = await loginStart()
+      const png = await renderQrPng(cfg.pythonPath, stateDir, url)
+      return {
+        ok: true, key, url, png,
+        hint: png ? '用 present 把这张 PNG 推给本人扫；扫完调 bili_login_poll' : '没画出 PNG：先去设置里点「建 venv 装依赖」（venv 里要有 qrcode）',
+      }
+    },
+  })
+
+  tool({
+    name: 'bili_login_poll',
+    description: '查扫码结果：waiting 还没扫 / scanned 扫了待确认 / ok 成功 / expired 过期。'
+      + '成功时会自动把凭证写进插件家目录的 `bili_credential.json`（MCP 认的那四个字段）。',
+    parameters: { key: { type: 'string', description: 'bili_login_start 给的那个 key' } },
+    async execute(args) {
+      const r = await loginPoll(String(args.key ?? ''))
+      if (r.state === 'ok') {
+        const file = saveCredential(stateDir, r.credential)
+        log(`登录成功，凭证已写入 ${file}`)
+        return { ok: true, state: 'ok', file }
+      }
+      return { ok: r.state !== 'unknown', state: r.state, code: r.code, message: r.message }
+    },
+  })
+
+  tool({
+    name: 'bili_setup',
+    description: '给刷B站装运行环境：在插件家目录建一个**独立 venv**、装上那个 Python MCP 的依赖，装完自动把 `pythonPath` 指过去。\n'
+      + '**第一次用之前跑一次**。⭐ 它**起完就返回、不等装完**（几分钟的活），进度看家目录里的 `install.log`。',
+    parameters: {},
+    async execute() { return runInstall() },
+  })
+
+  tool({
+    name: 'bili_config',
+    description: '读 / 改「刷B站」的设置。不给 `patch` 就是读；给了就改（只认 schema 里的字段）。\n'
+      + '例：`{"perDay":5,"peakValley":true,"noon":true,"night":true,"autoComment":false,"transcribe":false,"keywords":["DeepSeek Harness"]}`',
+    parameters: { patch: { type: 'object', additionalProperties: true, description: '要改的字段（可省）' } },
+    async execute(args) {
+      if (args?.patch && typeof args.patch === 'object' && !Array.isArray(args.patch)) saveCfg(args.patch)
+      return { ok: true, config: cfg, windows: WINDOWS, home: stateDir, venvReady: existsSync(venvPython()) }
+    },
+  })
+
+  /* ─────────────── 跑一轮（跟老方案同一条路：dsh --profile headless <prompt>） ─────────────── */
+
+  const dutyStateFile = join(stateDir, 'state.json')
+  const bumpState = (patch) => {
+    const st = readJson(dutyStateFile, {})
+    const today = dayKey()
+    if (st.day !== today) { st.day = today; st.count = 0; st.windows = {} }
+    writeJson(dutyStateFile, { ...st, ...patch })
+    return st
+  }
+
+  const resolveDsh = () => {
+    const explicit = String(cfg.dshBin || '').trim()
+    if (explicit && existsSync(explicit)) return { command: process.execPath, args: [explicit], shell: false }
+    // 常见的全局安装位置（Windows 的 npm 前缀 / POSIX 的 lib）
+    const guesses = [
+      join(process.env.APPDATA || '', 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+      '/usr/local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js',
+      '/usr/lib/node_modules/@deepseek-ai/dsh/lib/bin.js',
+    ].filter(Boolean)
+    for (const g of guesses) if (existsSync(g)) return { command: process.execPath, args: [g], shell: false }
+    return { command: 'dsh', args: [], shell: true }
+  }
+
+  const promptFor = () => {
+    // ⭐ 章程取哪一份：**插件里那份（永远跟版本一致）**；但家里那份如果**比它新**，说明使用者自己改过 ⇒ 听使用者的。
+    const shipped = join(pluginDir, 'prompts', 'duty.md')
+    const homeCopy = join(stateDir, 'duty.md')
+    let duty = shipped
+    try {
+      if (existsSync(homeCopy) && statSync(homeCopy).mtimeMs > statSync(shipped).mtimeMs) duty = homeCopy
+    } catch { /* 读不到就用 shipped 那份 */ }
+    const kws = Array.isArray(cfg.keywords) ? cfg.keywords.filter(Boolean) : []
+    // ⭐ 开场先让它读**工作区**的 AGENTS.md —— 这一轮的工作目录就是使用者的工作区，
+    //    AGENTS.md 本来就会自动注入；这里再点一句，保证它真按使用者的设定来（别人的设定同理）。
+    // ⭐ 那一轮的工作目录是**插件家**（沙箱只让它写自己工作目录里的东西 ✗），
+    //    所以"使用者的设定"由**我们自己读进来**喂给它 —— 它在宿主进程里跑，没有沙箱限制 ✓
+    let ownerDoc = ''
+    try {
+      const wsDir = String(cfg.workspace || '').trim() || process.cwd()
+      const agents = join(wsDir, 'AGENTS.md')
+      if (existsSync(agents)) {
+        const text = readFileSync(agents, 'utf8')
+        ownerDoc = '\n\n===== 使用者的 AGENTS.md（他写给自己 AI 的人设与准则，**按这个来**）=====\n'
+          + text.slice(0, 6000)
+          + '\n===== 设定结束 =====\n'
+      }
+    } catch { /* 读不到就算了，别因此跑不成 */ }
+    return `你是这个账号的 B站 助手。`
+      + `下面是使用者的设定（如果有）—— **按它来**，别用你默认那套人格。`
+      + ownerDoc
+      + `然后读章程 ${duty}，按里面的要求刷一轮 B站，`
+      + `把报告写到 ${join(outDir, `${dayKey()}.md`)}。`
+      + `今天最多挑 ${cfg.perDay} 条；关键词${kws.length ? `用这些：${kws.join('、')}` : '用章程里的默认那几组'}。`
+      + `本地转写是${cfg.transcribe ? '开着的（没字幕可以转）' : '关着的（没字幕就跳过）'}；`
+      + `自动评论并 @ ${cfg.mentionName || '（还没填要 @ 谁）'} 是${cfg.autoComment && cfg.mentionName
+        ? `开着的（每轮最多 ${cfg.commentPerRound} 条评论，每条在正文里纯文本 @ ${cfg.mentionName}，150 字内）`
+        : '关着的（只写报告，别发评论）'}。`
+      + `最后用一句话汇报你挑到了什么。现在几点了自己看一眼系统时间。`
+  }
+
+  /**
+   * 给 headless 那一轮写一份 overlay —— 把 B站 MCP 挂上去。
+   * 🔴 为什么需要它：**某个 profile 能拿到什么工具，取决于它自己那层的 patch**
+   *    （headless 里那两条 B站 MCP 就是当初手写进去的）。分发给别人时不能要求人家改 profile，
+   *    所以插件自己生成一份、跑的时候 `--patch` 带上（dsh 支持可重复的 `--patch`）。
+   */
+  const ensureOverlay = () => {
+    if (!cfg.overlayMcp) return null
+    const file = join(stateDir, 'headless-overlay.yml')
+    const script = join(stateDir, 'mcp_server.py')
+    const posix = (p) => String(p).replace(/\\/g, '/')
+    const yml = [
+      '- insert:',
+      '    - id: mcp-bili-duty',
+      "      name: '@deepseek-ai/dsh-mcp-client'",
+      '      config:',
+      '        serverName: bili-duty',
+      '        transport: stdio',
+      `        command: '${posix(cfg.pythonPath || 'python')}'`,
+      '        args:',
+      `          - '${posix(script)}'`,
+      '',
+    ].join('\n')
+    try { writeFileSync(file, yml, 'utf8'); return file } catch (e) { log(`写 overlay 失败：${e?.message ?? e}`); return null }
+  }
+
+  const runDuty = (why = 'window') => {
+   try {
+    const dsh = resolveDsh()
+    const overlay = ensureOverlay()
+    const args = [...dsh.args, '--profile', cfg.headlessProfile || 'headless']
+    if (overlay) args.push('--patch', overlay)
+    args.push(promptFor())
+    // ⭐ 这一轮的工作目录 = 使用者（或别的用户）的**工作区** —— 只有这样它的 `AGENTS.md` 才会自动加载。
+    // ⭐ 工作目录 = **插件家**：那一轮**被沙箱关着**，只写得了自己工作目录里的东西 ✗
+    //    （2026-10-14 教训：为了让它读工作区里的 AGENTS.md 把 cwd 改成工作区 ⇒
+    //      它写不了家目录里的 out/ 报告、整轮卡在"我是被沙箱关着的"上面打转 ✗；
+    //      现在改成"设定由插件读进来、内联进提示词" ✓，cwd 回到插件家 ✓）
+    const cwd = stateDir
+    log(`刷B站开跑（${why}）：${dsh.command} ${args.slice(0, 3).join(' ')} …  cwd=${cwd}`)
+    const child = spawn(dsh.command, args, {
+      cwd,
+      shell: dsh.shell,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, BILI_DUTY_HOME: stateDir },
+    })
+    const pick = (buf) => appendFileSync(logFile, String(buf), 'utf8')
+    child.stdout?.on('data', pick)
+    child.stderr?.on('data', pick)
+    child.on('exit', (code) => log(`刷B站结束（${why}，code=${code}）`))
+    child.on('error', (e) => log(`刷B站起不来：${e?.message ?? e}`))
+    return { started: true, why, profile: cfg.headlessProfile, cwd, log: logFile }
+   } catch (e) {
+    log(`刷B站开跑失败（${why}）：${e?.stack ?? e}`)
+    return { started: false, why, error: String(e?.message ?? e) }
+   }
+  }
+
+  /* ─────────────── 谷时定时器 ───────────────
+   * 🔴 2026-10-14 事故（使用者那边表现为"DSH 突然崩了、网页 Failed to fetch (gateway/internal)"）：
+   *    第一版是 `setInterval(tick, 60_000)`，回调里抛的 TypeError **没人接**，直接把整个宿主进程带走
+   *    （`dsh: fatal uncaught exception`）。⇒ **定时器回调必须自己兜住所有异常**：
+   *    插件再错也只该"这一轮没跑成"，绝不该杀宿主。
+   */
+  const tick = () => {
+    try {
+      if (!cfg.peakValley) return
+      const now = new Date()
+      const st = readJson(dutyStateFile, {})
+      const today = dayKey(now)
+      const count = st.day === today ? Number(st.count || 0) : 0
+      if (count >= Number(cfg.perDay || 0)) return
+      for (const k of ['noon', 'night']) {
+        if (!cfg[k]) continue
+        if (!inWindow(now, WINDOWS[k])) continue
+        const key = `${today}:${k}`
+        if (st.windows?.[key]) continue
+        bumpState({ windows: { ...(st.windows || {}), [key]: true }, lastRunAt: now.toISOString(), lastWhy: k })
+        runDuty(`window:${k}`)
+        return
+      }
+    } catch (e) {
+      log(`定时器这一跳出错（已兜住，不影响宿主）：${e?.stack ?? e}`)
+    }
+  }
+
+  try {
+    const timer = setInterval(tick, 60_000)
+    timer.unref?.()                                    // 别因为这个定时器让进程不肯退出
+    ctx.effect(() => () => clearInterval(timer), 'bili-duty: 谷时定时器')
+  } catch (e) { log(`定时器没起来：${e?.message ?? e}`) }
+
+  /* ─────────────── HTTP（设置页用） ─────────────── */
+
+  const sendJson = (res, code, obj) => {
+    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify(obj))
+  }
+  const readBody = (req) => new Promise((resolve) => {
+    let data = ''
+    req.on('data', (c) => { data += c; if (data.length > 1_000_000) req.destroy() })
+    req.on('end', () => { try { resolve(JSON.parse(data || '{}')) } catch { resolve({}) } })
+    req.on('error', () => resolve({}))
+  })
+
+  const venvPython = () => process.platform === 'win32'
+    ? join(stateDir, '.venv', 'Scripts', 'python.exe')
+    : join(stateDir, '.venv', 'bin', 'python')
+
+  /**
+   * 建 venv + 装依赖 —— ⭐ **起完就返回，不等它装完**。
+   *
+   * 🔴 为什么必须这样（2026-10-14 事故）：第一版是 `async` 全程 await，
+   *    而"建 venv + pip install"在使用者这条网络上要**几分钟** ⇒ 那个工具调用一直挂着，
+   *    **整个会话僵住、连"暂停"都卡，最后只能重启 dsh** ✗。
+   *    现在的做法：spawn 出去、输出追加进 `install.log`，函数立刻返回；
+   *    想知道装完没 —— 读日志，或看 `bili_duty_status` 里的 `installing`。
+   * 依赖走**国内镜像**（使用者那条网络 pip 直连只有 ~24KB/s ✗；uv + 清华源是几十秒 ✓）。
+   */
+  let installing = false
+  const installLogFile = join(stateDir, 'install.log')
+  const appendInstall = (s) => { try { appendFileSync(installLogFile, s, 'utf8') } catch { /* 写不进去就算了 */ } }
+
+  let uvOk = null
+  const haveUv = async () => {
+    if (uvOk !== null) return uvOk
+    uvOk = await new Promise((resolve) => {
+      try {
+        const c = spawn('uv', ['--version'], { windowsHide: true, stdio: 'ignore' })
+        c.on('exit', (code) => resolve(code === 0))
+        c.on('error', () => resolve(false))
+      } catch { resolve(false) }
+    })
+    return uvOk
+  }
+
+  /** 探一下某个命令在不在（用于"这台机器有没有 python"）—— 陌生人第一条坎就卡在这儿 */
+  const probeCmd = (cmd) => new Promise((resolve) => {
+    try {
+      const c = spawn(cmd, ['--version'], { windowsHide: true, stdio: 'ignore' })
+      c.on('exit', (code) => resolve(code === 0))
+      c.on('error', () => resolve(false))
+    } catch { resolve(false) }
+  })
+
+  const spawnLogged = (cmd, args) => new Promise((resolve) => {
+    appendInstall(`\n$ ${cmd} ${args.join(' ')}\n`)
+    let c
+    try { c = spawn(cmd, args, { cwd: stateDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }) }
+    catch (e) { appendInstall(`起不来：${e?.message ?? e}\n`); return resolve(1) }
+    const w = (b) => appendInstall(String(b))
+    c.stdout?.on('data', w)
+    c.stderr?.on('data', w)
+    c.on('exit', (code) => { appendInstall(`\n--- exit ${code} ---\n`); resolve(code) })
+    c.on('error', (e) => { appendInstall(`起不来：${e?.message ?? e}\n`); resolve(1) })
+  })
+
+  const runInstall = () => {
+    if (installing) return { ok: true, busy: true, log: installLogFile, hint: '正在装，别重复起' }
+    installing = true
+    appendInstall(`\n=== ${new Date().toISOString()} 开始装依赖 ===\n`)
+    ;(async () => {
+      try {
+        const reqFile = join(pluginDir, 'vendor', 'bilibili-mcp', 'requirements.txt')
+        const mirror = process.env.BILI_DUTY_PIP_MIRROR || 'https://pypi.tuna.tsinghua.edu.cn/simple'
+        const venvPy = venvPython()
+        // ⭐ 陌生人的头一条坎：机器上可能既没有 uv 也没有 python —— 原来只丢一句 ENOENT，用户看不懂 ✗
+        if (!existsSync(venvPy) && !(await haveUv()) && !(await probeCmd(String(cfg.pythonPath || 'python')))) {
+          const msg = '这台机器上没有 uv，也没有可用的 python（试过 "' + String(cfg.pythonPath || 'python') + '"）'
+            + '⇒ 请先装 Python 3.10+（python.org 下载，安装时勾上 Add to PATH）或 uv（https://docs.astral.sh/uv/），再回来点一次「装依赖」。'
+          appendInstall(msg + '\n'); log(msg); installing = false; return
+        }
+        if (!existsSync(venvPy)) {
+          if (await haveUv()) await spawnLogged('uv', ['venv', join(stateDir, '.venv')])
+          if (!existsSync(venvPy)) await spawnLogged(String(cfg.pythonPath || 'python'), ['-m', 'venv', join(stateDir, '.venv')])
+        }
+        let code = 1
+        if (await haveUv()) code = await spawnLogged('uv', ['pip', 'install', '--python', venvPy, '-i', mirror, '-r', reqFile])
+        if (code !== 0) code = await spawnLogged(venvPy, ['-m', 'pip', 'install', '-i', mirror, '-r', reqFile])
+        if (existsSync(venvPy)) { saveCfg({ pythonPath: venvPy }); appendInstall(`已把 pythonPath 设为 ${venvPy}\n`) }
+        appendInstall(`=== 结束（exit ${code}，venvReady=${existsSync(venvPy)}）===\n`)
+        log(`装依赖结束：exit=${code} venvReady=${existsSync(venvPy)}`)
+      } catch (e) {
+        appendInstall(`装依赖崩了：${e?.stack ?? e}\n`)
+        log(`装依赖崩了：${e?.message ?? e}`)
+      } finally { installing = false }
+    })()
+    return { ok: true, started: true, log: installLogFile, hint: '正在后台装依赖 —— 进度就显示在下面（走国内镜像，通常几十秒到一两分钟）' }
+  }
+
+  const status = () => {
+    const st = readJson(dutyStateFile, {})
+    const today = dayKey()
+    return {
+      ok: true,
+      home: stateDir,
+      config: cfg,
+      windows: WINDOWS,
+      today,
+      ranToday: st.day === today ? Number(st.count || 0) : 0,
+      lastRunAt: st.lastRunAt || null,
+      lastWhy: st.lastWhy || null,
+      loggedIn: hasCredential(),
+      venvReady: existsSync(venvPython()),
+      installing,
+      installLog: installLogFile,
+      // ⭐ 让设置页能显示"装到哪了"（陌生人原来只看到一句"后台在装" ✗）
+      installTail: (() => { try { return readFileSync(installLogFile, 'utf8').slice(-1400) } catch { return '' } })(),
+      report: join(outDir, `${today}.md`),
+      log: logFile,
+    }
+  }
+
+  const handle = async (req, res, url) => {
+    const path = url.pathname
+    if (req.method === 'GET' && path === '/api/bili-duty/status') return sendJson(res, 200, status())
+
+    if (req.method === 'GET' && path === '/api/bili-duty/config') {
+      return sendJson(res, 200, { ok: true, config: cfg, windows: WINDOWS, home: stateDir })
+    }
+
+    if (req.method === 'POST' && path === '/api/bili-duty/config') {
+      const body = await readBody(req)
+      const patch = {}
+      for (const k of ['perDay', 'peakValley', 'noon', 'night', 'autoComment', 'transcribe',
+        'commentPerRound', 'mentionName',
+        'keywords', 'pythonPath', 'dshBin', 'headlessProfile', 'workspace']) {
+        if (k in body) patch[k] = body[k]
+      }
+      if ('perDay' in patch) patch.perDay = Math.max(0, Math.min(Number(patch.perDay) || 0, 50))
+      saveCfg(patch)
+      log(`设置已更新：${JSON.stringify(patch)}`)
+      return sendJson(res, 200, { ok: true, config: cfg })
+    }
+
+    if (req.method === 'POST' && path === '/api/bili-duty/run') {
+      return sendJson(res, 200, { ok: true, ...runDuty('manual') })
+    }
+
+    // 建 venv + 装依赖（**不等它**：几分钟的活，进度写 install.log）
+    if (req.method === 'POST' && path === '/api/bili-duty/install') {
+      return sendJson(res, 200, runInstall())
+    }
+
+    // ── 扫码登录（设置页用）──
+    if (req.method === 'POST' && path === '/api/bili-duty/login/start') {
+      const { key, url } = await loginStart()
+      const png = await renderQrPng(cfg.pythonPath, stateDir, url)
+      let qr = null
+      if (png) { try { qr = 'data:image/png;base64,' + readFileSync(png).toString('base64') } catch { qr = null } }
+      log(`出码：${url}${qr ? '（已画成 PNG）' : '（没画出 PNG —— venv 里大概还没有 qrcode）'}`)
+      return sendJson(res, 200, { ok: true, key, url, qr })
+    }
+
+    if (req.method === 'POST' && path === '/api/bili-duty/login/poll') {
+      const body = await readBody(req)
+      const r = await loginPoll(String(body.key || ''))
+      if (r.state === 'ok') {
+        const file = saveCredential(stateDir, r.credential)
+        log(`登录成功，凭证已写入 ${file}`)
+        return sendJson(res, 200, { ok: true, state: 'ok', file })
+      }
+      return sendJson(res, 200, { ok: r.state !== 'unknown', state: r.state, code: r.code, message: r.message })
+    }
+
+    return sendJson(res, 404, { ok: false, error: `unknown ${req.method} ${path}` })
+  }
+
+  try {
+    ctx.effect(() => ctx.webServer.register({
+      kind: 'prefix',
+      path: '/api/bili-duty',
+      handler: async (req, res) => {
+        try { await handle(req, res, new URL(req.url, 'http://127.0.0.1')) } catch (e) {
+          sendJson(res, 500, { ok: false, error: e?.message ?? String(e) })
+        }
+      },
+    }), 'bili-duty: /api/bili-duty 路由')
+  } catch (e) { log(`HTTP 路由没挂上：${e?.message ?? e}`) }
+
+  ctx.effect(() => () => { try { mcp?.stop() } catch { /* 收摊 */ } }, 'bili-duty: 收 MCP 子进程')
+  log(`已挂载（家=${stateDir}，python=${cfg.pythonPath}，峰谷=${cfg.peakValley ? '开' : '关'}）`)
+}
