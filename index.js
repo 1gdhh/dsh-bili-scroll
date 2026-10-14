@@ -567,6 +567,10 @@ export function apply(ctx, config) {
   const asrPython = () => join(asrDir, process.platform === 'win32' ? 'Scripts' : 'bin',
     process.platform === 'win32' ? 'python.exe' : 'python')
   const appendAsr = (s) => { try { appendFileSync(asrLogFile, String(s)) } catch { /* 日志写不了也不能炸 */ } }
+  // ⭐ 转写的临时目录必须由**宿主**预先建好：值班那一轮跑在沙箱里，
+  //    而沙箱只允许写"该子进程启动前就已存在"的目录（2026-10-14 那一轮自己挖出来的规则）
+  const asrTmp = join(stateDir, 'tmp', 'asr')
+  try { mkdirSync(asrTmp, { recursive: true }) } catch { /* 建不了也别拦着插件加载 */ }
   let installingAsr = false
 
   /** 找 uv：系统里的 → 插件家里下好的 → 自己下一份（给"两样都没有"的人）；主/转写两套安装共用 */

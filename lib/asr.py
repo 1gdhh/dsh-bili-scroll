@@ -23,7 +23,7 @@ import tempfile
 #    yt-dlp 默认往 %TEMP% 写、会被直接拒掉（2026-10-14 在主人机器上实证：
 #    yt_dlp DownloadError: unable to open for writing: [Errno 13] Permission denied）
 _HOME = os.path.dirname(os.path.abspath(__file__))
-_TMP = os.path.join(_HOME, 'tmp')
+_TMP = os.path.join(_HOME, 'tmp', 'asr')
 try:
     os.makedirs(_TMP, exist_ok=True)
     tempfile.tempdir = _TMP
@@ -76,7 +76,9 @@ def main() -> int:
     args = ap.parse_args()
 
     src = args.target
-    tmp = tempfile.mkdtemp(prefix='bili-asr-', dir=_TMP)
+    # ⚠️ 不用 mkdtemp：沙箱只允许写"子进程启动前就存在"的目录，新建的会被拒 ✗
+    #    这个目录由宿主（插件）预先建好；文件名固定，跑完自己清掉
+    tmp = _TMP
     try:
         if src.lower().startswith('http') or src.upper().startswith('BV'):
             print('[asr] 先下音频…', file=sys.stderr)
@@ -98,8 +100,12 @@ def main() -> int:
     finally:
         # 临时音频不留在磁盘上
         try:
-            import shutil
-            shutil.rmtree(tmp, ignore_errors=True)
+            import shutil, glob
+            for f in glob.glob(os.path.join(tmp, '*')):
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
         except Exception:
             pass
 
