@@ -53,6 +53,9 @@ def fetch_audio(url: str, tmp: str) -> str:
         'outtmpl': os.path.join(tmp, 'audio.%(ext)s'),
         'paths': {'home': tmp, 'temp': tmp},   # 别让 yt-dlp 往 %TEMP% 写（沙箱会拒）
         'cachedir': False,                      # 顺手别去动用户目录里的缓存
+        # ⭐ nopart：不写 .part 再改名，直接落最终文件。
+        #    沙箱里"新建文件 + 改名"会被拒，而这条能绕开（2026-10-14 值班那一轮自己试出来的）
+        'nopart': True,
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
