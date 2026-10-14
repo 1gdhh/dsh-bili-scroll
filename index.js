@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url'
 import { McpClient } from './lib/mcp.mjs'
 import { WINDOWS, stateDirOf, readJson, writeJson, ensureHomeFiles, inWindow, dayKey } from './lib/state.mjs'
 import { loginStart, loginPoll, saveCredential, renderQrPng } from './lib/login.mjs'
+import { ensureUv } from './lib/uvfetch.mjs'
 
 export const name = 'bili-scroll'
 export const inject = ['webServer', 'tools', 'settings']
@@ -567,18 +568,29 @@ export function apply(ctx, config) {
         const reqFile = join(pluginDir, 'vendor', 'bilibili-mcp', 'requirements.txt')
         const mirror = process.env.BILI_DUTY_PIP_MIRROR || 'https://pypi.tuna.tsinghua.edu.cn/simple'
         const venvPy = venvPython()
-        // ⭐ 陌生人的头一条坎：机器上可能既没有 uv 也没有 python —— 原来只丢一句 ENOENT，用户看不懂 ✗
-        if (!existsSync(venvPy) && !(await haveUv()) && !(await probeCmd(String(cfg.pythonPath || 'python')))) {
-          const msg = '这台机器上没有 uv，也没有可用的 python（试过 "' + String(cfg.pythonPath || 'python') + '"）'
-            + '⇒ 请先装 Python 3.10+（python.org 下载，安装时勾上 Add to PATH）或 uv（https://docs.astral.sh/uv/），再回来点一次「装依赖」。'
+        const py = String(cfg.pythonPath || 'python')
+        // ⭐ 先确定"用哪个 uv"：系统里的 → 家里下好的 → **自己下一份**（给"两样都没有"的人）
+        let uvCmd = null
+        const bundledUv = join(stateDir, 'bin', process.platform === 'win32' ? 'uv.exe' : 'uv')
+        if (await haveUv()) uvCmd = 'uv'
+        else if (existsSync(bundledUv)) uvCmd = bundledUv
+        else {
+          appendInstall('这台机器上没有 uv —— 我下一份放进插件家目录（单文件、免管理员、约 30MB，只需要一次）…\n')
+          const got = await ensureUv({ dir: join(stateDir, 'bin'), log: appendInstall })
+          if (got) { uvCmd = got; appendInstall('uv 已就位：' + got + '\n') }
+        }
+        if (!existsSync(venvPy) && !uvCmd && !(await probeCmd(py))) {
+          const msg = '这台机器上没有 uv，也没有可用的 python（试过 "' + py + '"），而且我自动下 uv 也没成功'
+            + '（大概是网络到不了 GitHub / PyPI 镜像）。⇒ 请手动装 uv（单个 exe：https://docs.astral.sh/uv/）'
+            + '或 Python 3.10+（安装时勾 Add to PATH），然后回来再点一次「装依赖」。'
           appendInstall(msg + '\n'); log(msg); installing = false; return
         }
         if (!existsSync(venvPy)) {
-          if (await haveUv()) await spawnLogged('uv', ['venv', join(stateDir, '.venv')])
-          if (!existsSync(venvPy)) await spawnLogged(String(cfg.pythonPath || 'python'), ['-m', 'venv', join(stateDir, '.venv')])
+          if (uvCmd) await spawnLogged(uvCmd, ['venv', join(stateDir, '.venv')])
+          if (!existsSync(venvPy) && !uvCmd) await spawnLogged(py, ['-m', 'venv', join(stateDir, '.venv')])
         }
         let code = 1
-        if (await haveUv()) code = await spawnLogged('uv', ['pip', 'install', '--python', venvPy, '-i', mirror, '-r', reqFile])
+        if (uvCmd) code = await spawnLogged(uvCmd, ['pip', 'install', '--python', venvPy, '-i', mirror, '-r', reqFile])
         if (code !== 0) code = await spawnLogged(venvPy, ['-m', 'pip', 'install', '-i', mirror, '-r', reqFile])
         if (existsSync(venvPy)) { saveCfg({ pythonPath: venvPy }); appendInstall(`已把 pythonPath 设为 ${venvPy}\n`) }
         appendInstall(`=== 结束（exit ${code}，venvReady=${existsSync(venvPy)}）===\n`)

@@ -26,6 +26,7 @@
     "prompts",
     "vendor",
     "README.md",
+    "AGENTS.md",
     "LICENSE"
   ],
   "engines": {
