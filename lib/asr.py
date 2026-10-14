@@ -19,6 +19,17 @@ import os
 import sys
 import tempfile
 
+# ⚠️ 临时目录必须待在家目录里：值班那一轮跑在沙箱里（只允许写工作区/cwd），
+#    yt-dlp 默认往 %TEMP% 写、会被直接拒掉（2026-10-14 在主人机器上实证：
+#    yt_dlp DownloadError: unable to open for writing: [Errno 13] Permission denied）
+_HOME = os.path.dirname(os.path.abspath(__file__))
+_TMP = os.path.join(_HOME, 'tmp')
+try:
+    os.makedirs(_TMP, exist_ok=True)
+    tempfile.tempdir = _TMP
+except Exception:
+    pass
+
 # ⭐ 必须在 import faster_whisper **之前**设好，否则它已经去连 HuggingFace 了
 os.environ.setdefault('HF_ENDPOINT', 'https://hf-mirror.com')
 # 模型缓存放本脚本所在目录（= 插件家）：默认的 ~/.cache 在本机拒绝写入
@@ -40,6 +51,8 @@ def fetch_audio(url: str, tmp: str) -> str:
     opts = {
         'format': 'bestaudio/best',
         'outtmpl': os.path.join(tmp, 'audio.%(ext)s'),
+        'paths': {'home': tmp, 'temp': tmp},   # 别让 yt-dlp 往 %TEMP% 写（沙箱会拒）
+        'cachedir': False,                      # 顺手别去动用户目录里的缓存
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
@@ -63,7 +76,7 @@ def main() -> int:
     args = ap.parse_args()
 
     src = args.target
-    tmp = tempfile.mkdtemp(prefix='bili-asr-')
+    tmp = tempfile.mkdtemp(prefix='bili-asr-', dir=_TMP)
     try:
         if src.lower().startswith('http') or src.upper().startswith('BV'):
             print('[asr] 先下音频…', file=sys.stderr)
