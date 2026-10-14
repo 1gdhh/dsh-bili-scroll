@@ -140,6 +140,7 @@ window.__ModuleLoader__.load({
       const [perRound, setPerRound] = React.useState(null)
       const [mention, setMention] = React.useState(null)
       const [login, setLogin] = React.useState(null)
+      const [runNote, setRunNote] = React.useState(null)   // 顶部那行状态（跑一轮/装依赖的反馈原来在最底下，看不见）
       const [loginState, setLoginState] = React.useState('')
       const [loginTone, setLoginTone] = React.useState('')
 
@@ -154,7 +155,10 @@ window.__ModuleLoader__.load({
 
       const win = { ...DEFAULT_WINDOWS, ...(st?.windows || {}) }
 
-      const say = (text, tone) => { setMsg(text); setMsgTone(tone || '') }
+      const say = (text, tone) => {
+        setMsg(text); setMsgTone(tone || '')
+        setRunNote(text ? { t: text, tone: tone || '' } : null)   // ⭐ 同时镜像到顶部，免得提示掉到页面最底下看不见
+      }
 
       const patch = async (p, what) => {
         setBusy(JSON.stringify(p))
@@ -244,6 +248,8 @@ window.__ModuleLoader__.load({
           h('span', { 'data-bd-badge': '' }, st.loggedIn ? 'B站已登录' : 'B站未登录'),
           h('div', { 'data-bd-grow': '' }),
           h('button', { 'data-bd-btn': '', disabled: busy === 'run', onClick: onRun }, '现在跑一轮')),
+          runNote ? h('div', { 'data-bd-msg': '', 'data-good': runNote.tone === 'good' ? '' : undefined,
+            'data-warn': runNote.tone === 'warn' ? '' : undefined }, runNote.t) : null,
 
         /* ── 定时 ── */
         h('div', { 'data-bd-sec': '' },
