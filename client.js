@@ -134,6 +134,7 @@ window.__ModuleLoader__.load({
       const [msgTone, setMsgTone] = React.useState('')
       const [kws, setKws] = React.useState(null)
       const [ws, setWs] = React.useState(null)
+      const [rl, setRl] = React.useState(null)          // 日报形态：full / brief / off
       // ⚠️ 输入框必须绑"本地草稿"：页面每 5 秒轮询 /status，服务端那份会把 config 盖掉
       //    ⇒ 直接绑 cfg 的话，用户打字打到一半就被冲没了 ✗（2026-10-14 陌生人验收时抓到）
       const [perDay, setPerDay] = React.useState(null)
@@ -149,6 +150,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (cfg && kws === null) setKws((cfg.keywords || []).join('\n'))
         if (cfg && ws === null) setWs(cfg.workspace || '')
+        if (cfg && rl === null) setRl(cfg.reportLevel || 'full')
         if (cfg && perDay === null) setPerDay(String(cfg.perDay ?? 5))
         if (cfg && perRound === null) setPerRound(String(cfg.commentPerRound ?? 1))
         if (cfg && mention === null) setMention(cfg.mentionName || '')
@@ -372,6 +374,14 @@ window.__ModuleLoader__.load({
             'data-bd-input': '', value: ws ?? '', placeholder: '留空 = dsh 自己的工作目录',
             onChange: (e) => setWs(e.target.value),
           }),
+          h('div', { 'data-bd-label': '' }, '日报写多细'),
+          h('select', {
+            'data-bd-input': '', value: rl ?? 'full',
+            onChange: (e) => { setRl(e.target.value); patch({ reportLevel: e.target.value }, '日报形态') },
+          },
+            h('option', { value: 'full' }, '完整 —— 每条：标题 / UP / 为什么值得（默认）'),
+            h('option', { value: 'brief' }, '薄 —— 每条一两行，只留值不值得 + 链接'),
+            h('option', { value: 'off' }, '不写 —— 只发评论，不生成日报文件')),
           h('div', { 'data-bd-row': '' },
             h('button', { 'data-bd-btn': '', 'data-primary': '', disabled: Boolean(busy), onClick: onSaveText }, '保存'),
             msg ? h('div', { 'data-bd-msg': '', 'data-good': msgTone === 'good' ? '' : undefined, 'data-warn': msgTone === 'warn' ? '' : undefined }, msg) : null)),

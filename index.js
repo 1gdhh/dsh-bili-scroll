@@ -64,6 +64,8 @@ export const Config = z.object({
   overlayMcp: z.boolean().default(true).extra('volatile', true),
   /** 跑 headless 时的工作目录 */
   workspace: z.string().default('').extra('volatile', true),
+  /** 日报形态：full=完整（现状）· brief=每条一两行 · off=不写报告（只发评论） */
+  reportLevel: z.string().default('full').extra('volatile', true),
 })
 
 export function apply(ctx, config) {
@@ -113,7 +115,7 @@ export function apply(ctx, config) {
    */
   const DEFAULTS = {
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
-    keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '',
+    keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '', reportLevel: 'full',
   }
   const normalize = (src, base) => {
     const out = { ...base }
@@ -415,7 +417,11 @@ export function apply(ctx, config) {
       + `下面是使用者的设定（如果有）—— **按它来**，别用你默认那套人格。`
       + ownerDoc
       + `然后读章程 ${duty}，按里面的要求刷一轮 B站，`
-      + `把报告写到 ${join(outDir, `${dayKey()}.md`)}。`
+      + (cfg.reportLevel === 'brief'
+        ? `日报写成薄版：每条一两行（值不值得 + 链接）就够，别写长摘要。`
+        : cfg.reportLevel === 'off'
+          ? `这一轮不要写日报文件，也别生成任何报告；只有真发了评论就一句话记下。`
+          : `把报告写到 ${join(outDir, `${dayKey()}.md`)}。`)
       + `今天最多挑 ${cfg.perDay} 条；关键词${kws.length ? `用这些：${kws.join('、')}` : '用章程里的默认那几组'}。`
       + `本地转写是${cfg.transcribe ? '开着的（没字幕就用家目录里的 asr.py 转，命令见章程）' : '关着的（没字幕就跳过）'}；`
       + `自动评论并 @ ${cfg.mentionName || '（还没填要 @ 谁）'} 是${cfg.autoComment && cfg.mentionName
@@ -767,10 +773,11 @@ export function apply(ctx, config) {
       const patch = {}
       for (const k of ['perDay', 'peakValley', 'noon', 'night', 'autoComment', 'transcribe', 'asrModel',
         'commentPerRound', 'mentionName',
-        'keywords', 'pythonPath', 'dshBin', 'headlessProfile', 'workspace']) {
+        'keywords', 'pythonPath', 'dshBin', 'headlessProfile', 'workspace', 'reportLevel']) {
         if (k in body) patch[k] = body[k]
       }
       if ('perDay' in patch) patch.perDay = Math.max(0, Math.min(Number(patch.perDay) || 0, 50))
+      if ('reportLevel' in patch) patch.reportLevel = ['full', 'brief', 'off'].includes(String(patch.reportLevel)) ? String(patch.reportLevel) : 'full'
       saveCfg(patch)
       log(`设置已更新：${JSON.stringify(patch)}`)
       return sendJson(res, 200, { ok: true, config: cfg })
