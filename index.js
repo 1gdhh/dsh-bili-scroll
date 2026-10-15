@@ -17,7 +17,7 @@
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { spawn } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { McpClient } from './lib/mcp.mjs'
@@ -788,6 +788,27 @@ export function apply(ctx, config) {
     // 装"本地转写"那套（独立环境：faster-whisper + yt-dlp + Whisper 模型）
     if (req.method === 'POST' && path === '/api/bili-duty/install-asr') {
       return sendJson(res, 200, runAsrInstall())
+    }
+
+    // 「看今天的报告」：把报告的文本读出来给设置页显示（浏览器不能直接开本地文件 ✗）
+    if (req.method === 'GET' && path === '/api/bili-duty/report') {
+      const day = String(url.searchParams.get('day') || dayKey()).replace(/[^0-9-]/g, '') || dayKey()
+      const file = join(outDir, day + '.md')
+      let text = ''
+      let exists = false
+      try { exists = existsSync(file); if (exists) text = readFileSync(file, 'utf8').slice(0, 200000) } catch { /* 读不到就给空 */ }
+      return sendJson(res, 200, { ok: true, day, exists, file, text })
+    }
+
+    // 「打开文件夹」：浏览器开不了本地目录 ⇒ 让宿主去开（只认 out / home 两个，别的不受理）
+    if (req.method === 'POST' && path === '/api/bili-duty/open') {
+      const body = await readBody(req)
+      const dir = String(body?.what || 'out') === 'home' ? stateDir : outDir
+      if (process.platform !== 'win32') return sendJson(res, 200, { ok: false, error: '这个按钮目前只做了 Windows' })
+      try {
+        spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+        return sendJson(res, 200, { ok: true, opened: dir })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: String(e?.message ?? e) }) }
     }
 
     // 「测一下」：真跑一次，回答"能不能用"
