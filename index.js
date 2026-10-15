@@ -69,6 +69,27 @@ export const Config = z.object({
 export function apply(ctx, config) {
   const pluginDir = dirname(fileURLToPath(import.meta.url))
   const stateDir = stateDirOf(ctx)
+
+  // ⭐ "就绪"必须检查依赖真的装上了，不能只看目录存不存在
+  //    （2026-10-15：只看目录，害一位真实用户"显示就绪但其实装失败"白折腾 ✗）
+  const sitePkgs = (venvRoot) => {
+    const win = join(venvRoot, 'Lib', 'site-packages')
+    if (existsSync(win)) return win
+    try {
+      const lib = join(venvRoot, 'lib')
+      for (const d of readdirSync(lib)) {
+        if (!d.startsWith('python')) continue
+        const p = join(lib, d, 'site-packages')
+        if (existsSync(p)) return p
+      }
+    } catch { /* 没有就算了 */ }
+    return win
+  }
+  const hasPkg = (venvRoot, prefix) => {
+    try { return readdirSync(sitePkgs(venvRoot)).some((n) => n.startsWith(prefix)) } catch { return false }
+  }
+  const venvReadyNow = () => existsSync(venvPython()) && hasPkg(join(stateDir, '.venv'), 'bilibili_api')
+  const asrReadyNow = () => existsSync(asrPython()) && hasPkg(asrDir, 'faster_whisper')
   const cfgFile = join(stateDir, 'config.json')
   const logFile = join(stateDir, 'duty.log')
   const outDir = join(stateDir, 'out')
@@ -338,7 +359,7 @@ export function apply(ctx, config) {
     parameters: { patch: { type: 'object', additionalProperties: true, description: '要改的字段（可省）' } },
     async execute(args) {
       if (args?.patch && typeof args.patch === 'object' && !Array.isArray(args.patch)) saveCfg(args.patch)
-      return { ok: true, config: cfg, windows: WINDOWS, home: stateDir, venvReady: existsSync(venvPython()) }
+      return { ok: true, config: cfg, windows: WINDOWS, home: stateDir, venvReady: venvReadyNow() }
     },
   })
 
@@ -636,7 +657,7 @@ export function apply(ctx, config) {
         const code2 = await spawnTo(py, ['-c',
           'import os,sys;os.environ["HF_HUB_DISABLE_XET"]="1";from faster_whisper import WhisperModel;WhisperModel(sys.argv[1], device="cpu", compute_type="int8");print("模型就绪")',
           model], { sink: appendAsr, env: { HF_ENDPOINT: hf, HF_HOME: hfHome, HF_HUB_DISABLE_XET: '1' } })
-        appendAsr(`=== 结束（装包 exit ${code}，模型 exit ${code2}，asrReady=${existsSync(py)}）===\n`)
+        appendAsr(`=== 结束（装包 exit ${code}，模型 exit ${code2}，asrReady=${asrReadyNow()}）===\n`)
         log(`装转写依赖结束：exit=${code}/${code2}`)
       } catch (e) {
         appendAsr(`装转写依赖崩了：${e?.stack ?? e}\n`)
@@ -670,8 +691,8 @@ export function apply(ctx, config) {
         let code = 1
         if (uvCmd) code = await spawnLogged(uvCmd, ['pip', 'install', '--python', venvPy, '-i', mirror, '-r', reqFile])
         if (code !== 0) code = await spawnLogged(venvPy, ['-m', 'pip', 'install', '-i', mirror, '-r', reqFile])
-        if (existsSync(venvPy)) { saveCfg({ pythonPath: venvPy }); appendInstall(`已把 pythonPath 设为 ${venvPy}\n`) }
-        appendInstall(`=== 结束（exit ${code}，venvReady=${existsSync(venvPy)}）===\n`)
+        if (code === 0 && existsSync(venvPy)) { saveCfg({ pythonPath: venvPy }); appendInstall(`已把 pythonPath 设为 ${venvPy}\n`) }
+        appendInstall(`=== 结束（exit ${code}，venvReady=${venvReadyNow()}）===\n`)
         log(`装依赖结束：exit=${code} venvReady=${existsSync(venvPy)}`)
       } catch (e) {
         appendInstall(`装依赖崩了：${e?.stack ?? e}\n`)
@@ -684,7 +705,7 @@ export function apply(ctx, config) {
   /** 「测一下」：真跑一次查询再下结论（判据落在载荷上，不看自报） */
   const checkUp = async () => {
     const out = { ok: false, steps: [] }
-    if (!existsSync(venvPython())) { out.error = '环境还没装：先点「装主依赖」（几十秒）'; return out }
+    if (!venvReadyNow()) { out.error = '环境还没装好（可能上次装失败了）—— 点「重装主依赖」再试一次'; return out }
     if (!hasCredential()) { out.error = '还没登录：点「扫码登录」，手机 B站 扫一下'; return out }
     try {
       const who = await call('bili_check_credential', {})
@@ -715,11 +736,11 @@ export function apply(ctx, config) {
       lastRunAt: st.lastRunAt || null,
       lastWhy: st.lastWhy || null,
       loggedIn: hasCredential(),
-      venvReady: existsSync(venvPython()),
-      installFailed: !installing && !existsSync(venvPython()) && (() => { try { return readFileSync(installLogFile, 'utf8').length > 0 } catch { return false } })(),
+      venvReady: venvReadyNow(),
+      installFailed: !installing && !venvReadyNow() && (() => { try { return readFileSync(installLogFile, 'utf8').length > 0 } catch { return false } })(),
       installing,
       // ── 本地转写那一套的状态（设置页要显示进度）──
-      asrReady: existsSync(asrPython()),
+      asrReady: asrReadyNow(),
       // 模型下没下（免得界面写"就绪"、其实还得现下）
       asrModelReady: (() => { try { return existsSync(join(stateDir, '.hf-cache', 'hub')) } catch { return false } })(),
       asrInstalling: installingAsr,
