@@ -195,7 +195,7 @@ window.__ModuleLoader__.load({
       const onOpenFolder = async (what) => {
         try {
           const r = await jpost('/open', { what })
-          if (r && r.ok) say('已让系统打开：' + (r.opened || ''), 'good')
+          if (r && r.ok) say('已请系统打开：' + (r.opened || '') + '（要是没看到窗口，用旁边的「复制报告路径」——那个一定成）', 'good')
           else say('打不开（' + ((r && r.error) || '未知原因') + '）—— 你可以手动打开这个路径：' + ((r && r.dir) || ''))
         } catch (e) { say(String(e?.message ?? e), 'warn') }
       }
