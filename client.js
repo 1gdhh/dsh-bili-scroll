@@ -140,7 +140,8 @@ window.__ModuleLoader__.load({
       const [perRound, setPerRound] = React.useState(null)
       const [mention, setMention] = React.useState(null)
       const [login, setLogin] = React.useState(null)
-      const [runNote, setRunNote] = React.useState(null)   // 顶部那行状态（跑一轮/装依赖的反馈原来在最底下，看不见）
+      const [runNote, setRunNote] = React.useState(null)
+      const [report, setReport] = React.useState(null)        // 非 null = 报告已展开   // 顶部那行状态（跑一轮/装依赖的反馈原来在最底下，看不见）
       const [loginState, setLoginState] = React.useState('')
       const [loginTone, setLoginTone] = React.useState('')
 
@@ -168,6 +169,22 @@ window.__ModuleLoader__.load({
           say(what ? `${what}：已保存` : '已保存', 'good')
         } catch (e) { say(String(e?.message ?? e), 'warn') }
         finally { setBusy('') }
+      }
+
+      const onShowReport = async () => {
+        if (report !== null) { setReport(null); return }       // 再点一次收起
+        setBusy('report')
+        try {
+          const r = await jget('/report')
+          setReport(r && r.exists ? (r.text || '（报告是空的）') : '今天还没有报告 —— 跑一轮之后就有了')
+        } catch (e) { setReport('读不到报告：' + String(e?.message ?? e)) } finally { setBusy('') }
+      }
+
+      const onOpenFolder = async (what) => {
+        try {
+          const r = await jpost('/open', { what })
+          if (!r || !r.ok) say((r && r.error) || '打不开这个文件夹')
+        } catch (e) { say(String(e?.message ?? e), 'warn') }
       }
 
       const onCheck = async () => {
@@ -387,7 +404,13 @@ window.__ModuleLoader__.load({
           h('div', { 'data-bd-kv': '' },
             `家目录：${st.home}`,
             h('br'),
-            `今天的报告：${st.report}`)),
+            `今天的报告：${st.report}`),
+          h('div', { 'data-bd-row': '' },
+            h('button', { 'data-bd-btn': '', disabled: busy === 'report', onClick: onShowReport },
+              report !== null ? '收起报告' : '看今天的报告'),
+            h('button', { 'data-bd-btn': '', onClick: () => onOpenFolder('out') }, '打开报告文件夹'),
+            h('button', { 'data-bd-btn': '', onClick: () => onOpenFolder('home') }, '打开家目录')),
+          report !== null ? h('pre', { 'data-bd-pre': '' }, report) : null),
       )
     }
 
