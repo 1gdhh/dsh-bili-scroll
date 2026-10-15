@@ -200,6 +200,19 @@ window.__ModuleLoader__.load({
         } catch (e) { say(String(e?.message ?? e), 'warn') }
       }
 
+      const onCheckUpdate = async () => {
+        setBusy('update')
+        try {
+          const r = await jget('/update')
+          if (r && r.ok && r.latest) {
+            if (r.hasNew) say('有新版 v' + r.latest + '（你的是 v' + r.current + '）—— 跑一次 dsh plugin --profile web add dsh-bili-scroll 就是升级，然后重启一次', 'warn')
+            else say('已经是最新版 v' + r.current, 'good')
+          } else {
+            say('查不到最新版（可能网络不通）—— 你现在的版本是 v' + ((r && r.current) || '?'))
+          }
+        } catch (e) { say(String(e?.message ?? e), 'warn') } finally { setBusy('') }
+      }
+
       const onCheck = async () => {
         setBusy('check')
         say('')
@@ -286,6 +299,7 @@ window.__ModuleLoader__.load({
           h('span', { 'data-bd-badge': '' }, `今天已挑 ${st.ranToday} / ${cfg.perDay} 条`),
           h('span', { 'data-bd-badge': '' }, '环境' + (st.venvReady ? '已就绪' : (st.installing ? '正在装' : '未装'))),
           h('span', { 'data-bd-badge': '' }, st.loggedIn ? 'B站已登录' : 'B站未登录'),
+            h('span', { 'data-bd-badge': '' }, 'v' + (st.version || '?')),
           h('div', { 'data-bd-grow': '' }),
           h('button', { 'data-bd-btn': '', disabled: busy === 'run', onClick: onRun }, '现在跑一轮')),
           runNote ? h('div', { 'data-bd-msg': '', 'data-good': runNote.tone === 'good' ? '' : undefined,
@@ -404,6 +418,7 @@ window.__ModuleLoader__.load({
             h('button', { 'data-bd-btn': '', disabled: busy === 'install', onClick: onInstall },
               st.venvReady ? '重装主依赖' : '装主依赖（建 venv）'),
             h('button', { 'data-bd-btn': '', disabled: busy === 'check', onClick: onCheck }, '测一下'),
+            h('button', { 'data-bd-btn': '', disabled: busy === 'update', onClick: onCheckUpdate }, '检查更新'),
             h('button', { 'data-bd-btn': '', disabled: busy === 'login', onClick: onLoginStart }, '扫码登录'),
             h('div', { 'data-bd-note': '' },
               !st.venvReady ? (st.installFailed ? '上次没装成 → 看下面日志' : '还没装 → 先点「装主依赖」')

@@ -70,6 +70,13 @@ export const Config = z.object({
 
 export function apply(ctx, config) {
   const pluginDir = dirname(fileURLToPath(import.meta.url))
+  // ⭐ 自己的版本号（从 package.json 读，设置页要显示它）
+  let myVer = ''
+  const myVersion = () => {
+    if (myVer) return myVer
+    try { myVer = String(JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8')).version || '') } catch { myVer = '' }
+    return myVer
+  }
   const stateDir = stateDirOf(ctx)
 
   // ⭐ "就绪"必须检查依赖真的装上了，不能只看目录存不存在
@@ -729,6 +736,8 @@ export function apply(ctx, config) {
     return out
   }
 
+  let updateCache = null            // { at, latest } —— 检查更新的结果缓存
+
   const status = () => {
     const st = readJson(dutyStateFile, {})
     const today = dayKey()
@@ -743,6 +752,7 @@ export function apply(ctx, config) {
       lastWhy: st.lastWhy || null,
       loggedIn: hasCredential(),
       venvReady: venvReadyNow(),
+      version: myVersion(),
       installFailed: !installing && !venvReadyNow() && (() => { try { return readFileSync(installLogFile, 'utf8').length > 0 } catch { return false } })(),
       installing,
       // ── 本地转写那一套的状态（设置页要显示进度）──
@@ -835,6 +845,25 @@ export function apply(ctx, config) {
         log('打开文件夹失败（' + cmd + '）：' + err)
       }
       return sendJson(res, 200, { ok: false, error: lastErr, dir })
+    }
+
+    // 「检查更新」：⚠️ 只在用户点按钮时才联网（不偷偷发请求 ✓），结果缓存一天 ✓
+    if (req.method === 'GET' && path === '/api/bili-duty/update') {
+      const out = { ok: true, current: myVersion(), latest: '', hasNew: false, page: 'https://www.npmjs.com/package/dsh-bili-scroll' }
+      try {
+        if (updateCache && Date.now() - updateCache.at < 24 * 3600 * 1000) out.latest = updateCache.latest
+        else {
+          const ctrl = new AbortController()
+          const timer = setTimeout(() => ctrl.abort(), 8000)
+          const r = await fetch('https://registry.npmjs.org/dsh-bili-scroll/latest', { signal: ctrl.signal })
+          clearTimeout(timer)
+          const j = await r.json()
+          out.latest = String(j.version || '')
+          updateCache = { at: Date.now(), latest: out.latest }
+        }
+      } catch (e) { out.ok = false; out.error = String(e?.message ?? e); return sendJson(res, 200, out) }
+      out.hasNew = Boolean(out.latest) && out.latest !== out.current
+      return sendJson(res, 200, out)
     }
 
     // 「测一下」：真跑一次，回答"能不能用"
