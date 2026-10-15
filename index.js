@@ -383,6 +383,30 @@ export function apply(ctx, config) {
     return st
   }
 
+  // ⭐ 一键升级：由宿主自己跑 `dsh plugin --profile web add dsh-bili-scroll`
+  //    ⚠️ 装完必须重启 dsh 才生效；⚠️ Windows 上"替换正在运行的插件"可能被文件占用挡住（我们踩过）
+  let upgrading = false
+  const runUpgrade = () => {
+    if (upgrading) return { ok: true, busy: true, log: installLogFile, hint: '正在升级，别重复点' }
+    upgrading = true
+    appendInstall('\n=== ' + new Date().toISOString() + ' 开始升级（add dsh-bili-scroll）===\n')
+    ;(async () => {
+      try {
+        const dsh = resolveDsh()
+        // ⭐ 照抄那一轮的形状：resolveDsh 返回 { command, args, shell }
+        //    （写错就退化成裸 'dsh'，而宿主 PATH 里常常没有它 ⇒ 静默失败）
+        let cmd = dsh.command || 'dsh'
+        let args = [...(dsh.args || []), 'plugin', '--profile', 'web', 'add', 'dsh-bili-scroll']
+        if (dsh.shell) { args = ['/c', cmd, ...args]; cmd = 'cmd.exe' }
+        appendInstall('$ ' + cmd + ' ' + args.join(' ') + '\n')
+        const code = await spawnTo(cmd, args, { sink: appendInstall })
+        if (code === 0) appendInstall('=== 升级完成 —— 重启一次 dsh 才生效 ===\n')
+        else appendInstall('=== 升级没成功（exit ' + code + '）。可以自己手动跑一次：dsh plugin --profile web add dsh-bili-scroll ===\n')
+      } catch (e) { appendInstall('升级崩了：' + (e?.stack ?? e) + '\n') } finally { upgrading = false }
+    })()
+    return { ok: true, started: true, log: installLogFile, hint: '正在升级 —— 完成后重启一次 dsh 才生效' }
+  }
+
   const resolveDsh = () => {
     const explicit = String(cfg.dshBin || '').trim()
     if (explicit && existsSync(explicit)) return { command: process.execPath, args: [explicit], shell: false }
@@ -846,6 +870,9 @@ export function apply(ctx, config) {
       }
       return sendJson(res, 200, { ok: false, error: lastErr, dir })
     }
+
+    // 「一键升级」：点了它自己跑 add（⚠️ 之后要重启才生效）
+    if (req.method === 'POST' && path === '/api/bili-duty/upgrade') return sendJson(res, 200, runUpgrade())
 
     // 「检查更新」：⚠️ 只在用户点按钮时才联网（不偷偷发请求 ✓），结果缓存一天 ✓
     if (req.method === 'GET' && path === '/api/bili-duty/update') {

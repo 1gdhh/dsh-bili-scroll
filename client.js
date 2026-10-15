@@ -134,7 +134,8 @@ window.__ModuleLoader__.load({
       const [msgTone, setMsgTone] = React.useState('')
       const [kws, setKws] = React.useState(null)
       const [ws, setWs] = React.useState(null)
-      const [rl, setRl] = React.useState(null)          // 日报形态：full / brief / off
+      const [rl, setRl] = React.useState(null)
+      const [newVer, setNewVer] = React.useState('')       // 发现的新版本号（空 = 没发现）          // 日报形态：full / brief / off
       // ⚠️ 输入框必须绑"本地草稿"：页面每 5 秒轮询 /status，服务端那份会把 config 盖掉
       //    ⇒ 直接绑 cfg 的话，用户打字打到一半就被冲没了 ✗（2026-10-14 陌生人验收时抓到）
       const [perDay, setPerDay] = React.useState(null)
@@ -200,13 +201,24 @@ window.__ModuleLoader__.load({
         } catch (e) { say(String(e?.message ?? e), 'warn') }
       }
 
+      const onUpgrade = async () => {
+        setBusy('upgrade')
+        try {
+          const r = await jpost('/upgrade', {})
+          say((r && r.hint) || '正在升级', 'good')
+          say('升级过程写在下面的「主依赖的日志」里 —— 完了记得重启一次 dsh（不重启还是旧版）', 'warn')
+        } catch (e) { say(String(e?.message ?? e), 'warn') } finally { setBusy('') }
+      }
+
       const onCheckUpdate = async () => {
         setBusy('update')
         try {
           const r = await jget('/update')
           if (r && r.ok && r.latest) {
-            if (r.hasNew) say('有新版 v' + r.latest + '（你的是 v' + r.current + '）—— 跑一次 dsh plugin --profile web add dsh-bili-scroll 就是升级，然后重启一次', 'warn')
-            else say('已经是最新版 v' + r.current, 'good')
+            if (r.hasNew) {
+              setNewVer(r.latest)
+              say('有新版 v' + r.latest + '（你的是 v' + r.current + '）—— 点右边的「一键升级」，完了重启一次 dsh', 'warn')
+            } else say('已经是最新版 v' + r.current, 'good')
           } else {
             say('查不到最新版（可能网络不通）—— 你现在的版本是 v' + ((r && r.current) || '?'))
           }
@@ -419,6 +431,7 @@ window.__ModuleLoader__.load({
               st.venvReady ? '重装主依赖' : '装主依赖（建 venv）'),
             h('button', { 'data-bd-btn': '', disabled: busy === 'check', onClick: onCheck }, '测一下'),
             h('button', { 'data-bd-btn': '', disabled: busy === 'update', onClick: onCheckUpdate }, '检查更新'),
+            newVer ? h('button', { 'data-bd-btn': '', 'data-primary': '', disabled: busy === 'upgrade', onClick: onUpgrade }, '一键升级到 v' + newVer) : null,
             h('button', { 'data-bd-btn': '', disabled: busy === 'login', onClick: onLoginStart }, '扫码登录'),
             h('div', { 'data-bd-note': '' },
               !st.venvReady ? (st.installFailed ? '上次没装成 → 看下面日志' : '还没装 → 先点「装主依赖」')
