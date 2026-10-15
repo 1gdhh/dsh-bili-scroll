@@ -170,6 +170,16 @@ window.__ModuleLoader__.load({
         finally { setBusy('') }
       }
 
+      const onCheck = async () => {
+        setBusy('check')
+        say('')
+        try {
+          const r = await jpost('/check', {})
+          if (r && r.ok) say('能用！' + (r.steps || []).join('、'))
+          else say('还不能用：' + (r && r.error ? r.error : '没拿到结果'))
+        } catch (e) { say(String(e?.message ?? e), 'warn') } finally { setBusy('') }
+      }
+
       const onInstallAsr = async () => {
         setBusy('asr')
         say('')
@@ -244,7 +254,7 @@ window.__ModuleLoader__.load({
         /* ── 今天 ── */
         h('div', { 'data-bd-row': '' },
           h('span', { 'data-bd-badge': '' }, `今天已挑 ${st.ranToday} / ${cfg.perDay} 条`),
-          h('span', { 'data-bd-badge': '' }, `venv ${st.venvReady ? '就绪' : '未装'}${st.installing ? '（正在装）' : ''}`),
+          h('span', { 'data-bd-badge': '' }, '环境' + (st.venvReady ? '已就绪' : (st.installing ? '正在装' : '未装'))),
           h('span', { 'data-bd-badge': '' }, st.loggedIn ? 'B站已登录' : 'B站未登录'),
           h('div', { 'data-bd-grow': '' }),
           h('button', { 'data-bd-btn': '', disabled: busy === 'run', onClick: onRun }, '现在跑一轮')),
@@ -355,8 +365,11 @@ window.__ModuleLoader__.load({
           h('div', { 'data-bd-row': '' },
             h('button', { 'data-bd-btn': '', disabled: busy === 'install', onClick: onInstall },
               st.venvReady ? '重装主依赖' : '装主依赖（建 venv）'),
+            h('button', { 'data-bd-btn': '', disabled: busy === 'check', onClick: onCheck }, '测一下'),
             h('button', { 'data-bd-btn': '', disabled: busy === 'login', onClick: onLoginStart }, '扫码登录'),
-            h('div', { 'data-bd-note': '' }, st.loggedIn ? '已登录' : '还没登录 B站')),
+            h('div', { 'data-bd-note': '' },
+              !st.venvReady ? (st.installFailed ? '上次没装成 → 看下面日志' : '还没装 → 先点「装主依赖」')
+                : (st.loggedIn ? '装好了 → 下一步「扫码登录」' : '环境好了 → 点「扫码登录」'))),
           loginState ? h('div', { 'data-bd-msg': '', 'data-good': loginTone === 'good' ? '' : undefined, 'data-warn': loginTone === 'warn' ? '' : undefined }, loginState) : null,
           st.installTail ? h('div', null,
             h('div', { 'data-bd-note': '' }, st.installing ? '正在装主依赖（进度）：' : '主依赖的日志（B站 搜索 / 字幕 / 评论 用得到，末尾）：'),

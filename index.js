@@ -681,6 +681,27 @@ export function apply(ctx, config) {
     return { ok: true, started: true, log: installLogFile, hint: '正在后台装依赖 —— 进度就显示在下面（走国内镜像，通常几十秒到一两分钟）' }
   }
 
+  /** 「测一下」：真跑一次查询再下结论（判据落在载荷上，不看自报） */
+  const checkUp = async () => {
+    const out = { ok: false, steps: [] }
+    if (!existsSync(venvPython())) { out.error = '环境还没装：先点「装主依赖」（几十秒）'; return out }
+    if (!hasCredential()) { out.error = '还没登录：点「扫码登录」，手机 B站 扫一下'; return out }
+    try {
+      const who = await call('bili_check_credential', {})
+      out.who = (typeof who === 'object' ? JSON.stringify(who) : String(who)).slice(0, 140)
+      out.steps.push('登录有效')
+    } catch (e) { out.error = '登录检查失败：' + (e?.message ?? e); return out }
+    try {
+      const s = await call('bili_search', { keyword: 'DeepSeek Harness', num: 3 })
+      const t = typeof s === 'string' ? s : JSON.stringify(s)
+      out.sample = t.slice(0, 160)
+      out.steps.push('能搜到东西')
+      out.ok = t.length > 2
+      if (!out.ok) out.error = '搜到了空结果'
+    } catch (e) { out.error = '搜索失败：' + (e?.message ?? e) }
+    return out
+  }
+
   const status = () => {
     const st = readJson(dutyStateFile, {})
     const today = dayKey()
@@ -695,6 +716,7 @@ export function apply(ctx, config) {
       lastWhy: st.lastWhy || null,
       loggedIn: hasCredential(),
       venvReady: existsSync(venvPython()),
+      installFailed: !installing && !existsSync(venvPython()) && (() => { try { return readFileSync(installLogFile, 'utf8').length > 0 } catch { return false } })(),
       installing,
       // ── 本地转写那一套的状态（设置页要显示进度）──
       asrReady: existsSync(asrPython()),
@@ -745,6 +767,11 @@ export function apply(ctx, config) {
     // 装"本地转写"那套（独立环境：faster-whisper + yt-dlp + Whisper 模型）
     if (req.method === 'POST' && path === '/api/bili-duty/install-asr') {
       return sendJson(res, 200, runAsrInstall())
+    }
+
+    // 「测一下」：真跑一次，回答"能不能用"
+    if (req.method === 'POST' && path === '/api/bili-duty/check') {
+      return sendJson(res, 200, await checkUp())
     }
 
     // ── 扫码登录（设置页用）──
