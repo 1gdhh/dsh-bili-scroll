@@ -812,10 +812,27 @@ export function apply(ctx, config) {
       const body = await readBody(req)
       const dir = String(body?.what || 'out') === 'home' ? stateDir : outDir
       if (process.platform !== 'win32') return sendJson(res, 200, { ok: false, error: '这个按钮目前只做了 Windows' })
-      try {
-        spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
-        return sendJson(res, 200, { ok: true, opened: dir })
-      } catch (e) { return sendJson(res, 200, { ok: false, error: String(e?.message ?? e) }) }
+      // ⭐ 三种方式依次试（PATH 不全时 explorer.exe 会找不到 ✗；spawn 的失败是**异步**的，
+      //    try/catch 抓不到 ⇒ 必须挂 'error' 监听，否则会升级成未捕获异常）
+      const attempts = [
+        [join(process.env.SystemRoot || 'C:\\Windows', 'explorer.exe'), [dir]],
+        ['explorer.exe', [dir]],
+        ['cmd.exe', ['/c', 'start', '', dir]],
+      ]
+      let lastErr = ''
+      for (const [cmd, args] of attempts) {
+        const err = await new Promise((resolve) => {
+          let done = false
+          let child
+          try { child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true }) } catch (e) { resolve(String(e?.message ?? e)); return }
+          child.on('error', (e) => { if (!done) { done = true; resolve(String(e?.message ?? e)) } })
+          setTimeout(() => { if (!done) { done = true; try { child.unref() } catch { /* 无所谓 */ } resolve('') } }, 500)
+        })
+        if (!err) return sendJson(res, 200, { ok: true, opened: dir, via: cmd })
+        lastErr = err
+        log('打开文件夹失败（' + cmd + '）：' + err)
+      }
+      return sendJson(res, 200, { ok: false, error: lastErr, dir })
     }
 
     // 「测一下」：真跑一次，回答"能不能用"

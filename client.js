@@ -185,7 +185,8 @@ window.__ModuleLoader__.load({
       const onOpenFolder = async (what) => {
         try {
           const r = await jpost('/open', { what })
-          if (!r || !r.ok) say((r && r.error) || '打不开这个文件夹')
+          if (r && r.ok) say('已让系统打开：' + (r.opened || ''), 'good')
+          else say('打不开（' + ((r && r.error) || '未知原因') + '）—— 你可以手动打开这个路径：' + ((r && r.dir) || ''))
         } catch (e) { say(String(e?.message ?? e), 'warn') }
       }
 
