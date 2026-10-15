@@ -66,6 +66,10 @@ export const Config = z.object({
   workspace: z.string().default('').extra('volatile', true),
   /** 日报形态：full=完整（现状）· brief=每条一两行 · off=不写报告（只发评论） */
   reportLevel: z.string().default('full').extra('volatile', true),
+  /** 回复评论：默认关。开了之后只回「直接回复到它那条评论下面的人」 */
+  replyToComments: z.boolean().default(false).extra('volatile', true),
+  /** 每轮最多回几条 */
+  replyPerRound: z.number().default(1).extra('volatile', true),
 })
 
 export function apply(ctx, config) {
@@ -122,7 +126,7 @@ export function apply(ctx, config) {
    */
   const DEFAULTS = {
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
-    keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '', reportLevel: 'full',
+    keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '', reportLevel: 'full', replyToComments: false, replyPerRound: 1,
   }
   const normalize = (src, base) => {
     const out = { ...base }
@@ -458,6 +462,9 @@ export function apply(ctx, config) {
       + `自动评论并 @ ${cfg.mentionName || '（还没填要 @ 谁）'} 是${cfg.autoComment && cfg.mentionName
         ? `开着的（每轮最多 ${cfg.commentPerRound} 条评论，每条在正文里纯文本 @ ${cfg.mentionName}，150 字内）`
         : '关着的（只写报告，别发评论）'}。`
+      + (cfg.replyToComments
+        ? `回复评论：开着（每轮最多回 ${Number(cfg.replyPerRound) || 1} 条）—— 只回「直接回复到你那条评论下面的人」，回完记进报告；找不到你那条评论就跳过，别硬找。`
+        : `回复评论：关着（一个字都不要回任何人 —— 有人回复你那条评论也不要理）。`)
       + `最后用一句话汇报你挑到了什么。现在几点了自己看一眼系统时间。`
   }
 
@@ -807,11 +814,13 @@ export function apply(ctx, config) {
       const patch = {}
       for (const k of ['perDay', 'peakValley', 'noon', 'night', 'autoComment', 'transcribe', 'asrModel',
         'commentPerRound', 'mentionName',
-        'keywords', 'pythonPath', 'dshBin', 'headlessProfile', 'workspace', 'reportLevel']) {
+        'keywords', 'pythonPath', 'dshBin', 'headlessProfile', 'workspace', 'reportLevel', 'replyToComments', 'replyPerRound']) {
         if (k in body) patch[k] = body[k]
       }
       if ('perDay' in patch) patch.perDay = Math.max(0, Math.min(Number(patch.perDay) || 0, 50))
       if ('reportLevel' in patch) patch.reportLevel = ['full', 'brief', 'off'].includes(String(patch.reportLevel)) ? String(patch.reportLevel) : 'full'
+      if ('replyToComments' in patch) patch.replyToComments = Boolean(patch.replyToComments)
+      if ('replyPerRound' in patch) patch.replyPerRound = Math.max(1, Math.min(Number(patch.replyPerRound) || 1, 10))
       saveCfg(patch)
       log(`设置已更新：${JSON.stringify(patch)}`)
       return sendJson(res, 200, { ok: true, config: cfg })

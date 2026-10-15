@@ -140,6 +140,7 @@ window.__ModuleLoader__.load({
       //    ⇒ 直接绑 cfg 的话，用户打字打到一半就被冲没了 ✗（2026-10-14 陌生人验收时抓到）
       const [perDay, setPerDay] = React.useState(null)
       const [perRound, setPerRound] = React.useState(null)
+      const [replyPer, setReplyPer] = React.useState(null)
       const [mention, setMention] = React.useState(null)
       const [login, setLogin] = React.useState(null)
       const [runNote, setRunNote] = React.useState(null)
@@ -154,6 +155,7 @@ window.__ModuleLoader__.load({
         if (cfg && rl === null) setRl(cfg.reportLevel || 'full')
         if (cfg && perDay === null) setPerDay(String(cfg.perDay ?? 5))
         if (cfg && perRound === null) setPerRound(String(cfg.commentPerRound ?? 1))
+        if (cfg && replyPer === null) setReplyPer(String(cfg.replyPerRound ?? 1))
         if (cfg && mention === null) setMention(cfg.mentionName || '')
       }, [cfg])
 
@@ -353,6 +355,23 @@ window.__ModuleLoader__.load({
         /* ── 发言与转写 ── */
         h('div', { 'data-bd-sec': '' },
           h('div', { 'data-bd-h': '' }, '它会不会替你说话'),
+          h(ToggleRow, {
+            label: '回复评论（只回楼中楼）',
+            note: '默认关；开了之后它只回「直接回复到你那条评论下面的人」，不参与讨论',
+            on: sw('replyToComments'),
+            onChange: (v) => patch({ replyToComments: v }, '回复评论'),
+          }),
+          sw('replyToComments') ? h('div', { 'data-bd-sub': '' },
+            h('div', { 'data-bd-row': '' },
+              h('div', { 'data-bd-grow': '' },
+                h('div', { 'data-bd-label': '' }, '每轮最多回几条'),
+                h('div', { 'data-bd-note': '' }, '只回直接回在你那条评论下面的人')),
+              h('input', {
+                'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 1, max: 10,
+                value: replyPer ?? '',
+                onChange: (e) => setReplyPer(e.target.value),
+                onBlur: () => { const n = Math.max(1, Math.min(Number(replyPer) || 1, 10)); setReplyPer(String(n)); patch({ replyPerRound: n }, '每轮几条回复') },
+              }))) : null,
           h(ToggleRow, {
             label: '自动评论并 @ 你',
             note: '默认关；开了之后它会在挑中的视频下面留评论，并 @ 你填的那个人',
