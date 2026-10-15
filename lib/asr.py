@@ -16,6 +16,7 @@ asr.py —— 把一条 B站 视频（或本地音视频文件）转成文字。
 """
 import argparse
 import os
+import re
 import sys
 import tempfile
 
@@ -45,12 +46,12 @@ def to_url(target: str) -> str:
     return t
 
 
-def fetch_audio(url: str, tmp: str) -> str:
+def fetch_audio(url: str, tmp: str, tag: str) -> str:
     """用 yt-dlp 把音频拉下来（B站 是 DASH 音视频分离，取 bestaudio 即可，不需要 ffmpeg 合并）"""
     from yt_dlp import YoutubeDL
     opts = {
         'format': 'bestaudio/best',
-        'outtmpl': os.path.join(tmp, 'audio.%(ext)s'),
+        'outtmpl': os.path.join(tmp, tag + '.%(ext)s'),   # ⭐ 用 BV 号当文件名：固定名会和别的轮次撞车（踩过）
         'paths': {'home': tmp, 'temp': tmp},   # 别让 yt-dlp 往 %TEMP% 写（沙箱会拒）
         'cachedir': False,                      # 顺手别去动用户目录里的缓存
         # ⭐ nopart：不写 .part 再改名，直接落最终文件。
@@ -82,10 +83,14 @@ def main() -> int:
     # ⚠️ 不用 mkdtemp：沙箱只允许写"子进程启动前就存在"的目录，新建的会被拒 ✗
     #    这个目录由宿主（插件）预先建好；文件名固定，跑完自己清掉
     tmp = _TMP
+    # ⭐ 每个视频用**自己的**文件名：以前写死 audio.m4a ⇒ 两轮同时跑会互相覆盖，
+    #    上一轮转出来的其实是另一个视频的内容（2026-10-14 值班那轮亲踩 ✗）
+    tag = os.path.basename(src).rsplit('.', 1)[0] or 'clip'
+    tag = re.sub(r'[^0-9A-Za-z_-]', '_', tag)[:40] or 'clip'
     try:
         if src.lower().startswith('http') or src.upper().startswith('BV'):
             print('[asr] 先下音频…', file=sys.stderr)
-            src = fetch_audio(to_url(src), tmp)
+            src = fetch_audio(to_url(src), tmp, tag)
         if not os.path.exists(src):
             print('[asr] 找不到文件：' + src, file=sys.stderr)
             return 2
@@ -103,8 +108,8 @@ def main() -> int:
     finally:
         # 临时音频不留在磁盘上
         try:
-            import shutil, glob
-            for f in glob.glob(os.path.join(tmp, '*')):
+            import glob
+            for f in glob.glob(os.path.join(tmp, tag + '.*')):
                 try:
                     os.remove(f)
                 except Exception:
