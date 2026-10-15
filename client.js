@@ -182,6 +182,16 @@ window.__ModuleLoader__.load({
         } catch (e) { setReport('读不到报告：' + String(e?.message ?? e)) } finally { setBusy('') }
       }
 
+      const copyText = async (text) => {
+        const v = String(text || '')
+        try {
+          await navigator.clipboard.writeText(v)
+          say('已复制：' + v, 'good')
+        } catch {
+          say('复制失败 —— 路径是：' + v)       // 兜底：至少把路径显示出来，手动选中也能复制
+        }
+      }
+
       const onOpenFolder = async (what) => {
         try {
           const r = await jpost('/open', { what })
@@ -420,7 +430,8 @@ window.__ModuleLoader__.load({
             h('button', { 'data-bd-btn': '', disabled: busy === 'report', onClick: onShowReport },
               report !== null ? '收起报告' : '看今天的报告'),
             h('button', { 'data-bd-btn': '', onClick: () => onOpenFolder('out') }, '打开报告文件夹'),
-            h('button', { 'data-bd-btn': '', onClick: () => onOpenFolder('home') }, '打开家目录')),
+            h('button', { 'data-bd-btn': '', onClick: () => onOpenFolder('home') }, '打开家目录'),
+            h('button', { 'data-bd-btn': '', onClick: () => copyText(st.report) }, '复制报告路径')),
           report !== null ? h('pre', { 'data-bd-pre': '' }, report) : null),
       )
     }
