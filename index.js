@@ -889,7 +889,14 @@ export function apply(ctx, config) {
           updateCache = { at: Date.now(), latest: out.latest }
         }
       } catch (e) { out.ok = false; out.error = String(e?.message ?? e); return sendJson(res, 200, out) }
-      out.hasNew = Boolean(out.latest) && out.latest !== out.current
+      // ⭐ 要比谁更新，不能只比不相等 —— 否则本地版本高于 npm 时会误报有新版
+      const vnum = (v) => String(v || '').split('.').map((x) => parseInt(x, 10) || 0)
+      const cmp = (a, b) => {
+        const x = vnum(a), y = vnum(b)
+        for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0) }
+        return 0
+      }
+      out.hasNew = Boolean(out.latest) && cmp(out.latest, out.current) > 0
       return sendJson(res, 200, out)
     }
 
