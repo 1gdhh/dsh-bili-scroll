@@ -185,6 +185,21 @@ window.__ModuleLoader__.load({
         } catch (e) { setReport('读不到报告：' + String(e?.message ?? e)) } finally { setBusy('') }
       }
 
+      // ⭐ 复核评论：接口回"发送成功"≠ 公开可见（新号/风控会进审核，那时候连 @ 都不会推）
+      //    所以让宿主真去拉一次评论列表 / 楼中楼，确认那条到底在不在。
+      const onVerify = async () => {
+        setBusy('verify')
+        try {
+          const r = await jpost('/verify', {})
+          if (!r || !r.ok) { say('复核没跑成：' + ((r && r.error) || '未知原因'), 'warn'); return }
+          const n = (r.checked || []).length
+          const vis = (r.checked || []).filter((c) => c.visible === true).length
+          if (!n) say(r.text || '没有需要复核的记录', 'good')
+          else say(`复核完 ${n} 条：公开可见 ${vis} 条，其余「没查到」（可能还在审核 —— 看不到不等于没发出去）。结果也追加到今天的报告末尾了。`, vis ? 'good' : 'warn')
+          if (r.report) setReport(null)
+        } catch (e) { say(String(e?.message ?? e), 'warn') } finally { setBusy('') }
+      }
+
       const copyText = async (text) => {
         const v = String(text || '')
         try {
@@ -478,6 +493,8 @@ window.__ModuleLoader__.load({
               report !== null ? '收起报告' : '看今天的报告'),
             h('button', { 'data-bd-btn': '', onClick: () => onOpenFolder('out') }, '打开报告文件夹'),
             h('button', { 'data-bd-btn': '', onClick: () => onOpenFolder('home') }, '打开家目录'),
+            h('button', { 'data-bd-btn': '', disabled: busy === 'verify', onClick: onVerify },
+              '复核评论'),
             h('button', { 'data-bd-btn': '', onClick: () => copyText(st.report) }, '复制报告路径')),
           report !== null ? h('pre', { 'data-bd-pre': '' }, report) : null),
       )

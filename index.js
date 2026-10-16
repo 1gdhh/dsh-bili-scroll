@@ -21,6 +21,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statS
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { McpClient } from './lib/mcp.mjs'
+import { verifyRecent, appendVerifyToReport } from './lib/verify.mjs'
 import { WINDOWS, stateDirOf, readJson, writeJson, ensureHomeFiles, inWindow, dayKey } from './lib/state.mjs'
 import { loginStart, loginPoll, saveCredential, renderQrPng } from './lib/login.mjs'
 import { ensureUv } from './lib/uvfetch.mjs'
@@ -517,6 +518,30 @@ export function apply(ctx, config) {
     try { writeFileSync(file, yml, 'utf8'); return file } catch (e) { log(`写 overlay 失败：${e?.message ?? e}`); return null }
   }
 
+  /**
+   * ⭐ 评论发出后复核（2026-10-16 加的行 —— 起因是用户在评论区反馈
+   *    「**回执成功不等于公开可见，新号会被压审**」）：
+   * 那一轮的 `bili_reply` 回"发送成功"只代表**接口收了**；新号 / 风控会让它进审核，
+   * 那时候连 @ 通知都不会推 ⇒ 插件以为发了、下一轮又不再发 ⇒ **一条都没到人**。
+   * 所以由**宿主**（有网络、有凭证、不受沙箱限制）去拉一次评论列表 / 楼中楼来核。
+   * ⚠️ 措辞守则：看不到写「**没查到**」，**绝不写"没发出去"**（翻页/热度排序都会漏）。
+   */
+  let verifying = false
+  const runVerify = async (why = 'manual') => {
+    if (verifying) return { ok: false, error: '上一次复核还没跑完，等它完事' }
+    verifying = true
+    try {
+      log(`评论复核开始（${why}）`)
+      const r = await verifyRecent(stateDir, { log })
+      const f = appendVerifyToReport(stateDir, r.text)
+      log(`评论复核结束（${why}）：查了 ${r.checked.length} 条${f ? `，已写进 ${f}` : ''}`)
+      return { ok: true, why, checked: r.checked, skipped: r.skipped, text: r.text, report: f || '' }
+    } catch (e) {
+      log(`评论复核失败（${why}）：${e?.message ?? e}`)
+      return { ok: false, why, error: String(e?.message ?? e) }
+    } finally { verifying = false }
+  }
+
   const runDuty = (why = 'window') => {
    try {
     const dsh = resolveDsh()
@@ -543,7 +568,13 @@ export function apply(ctx, config) {
     const pick = (buf) => appendFileSync(logFile, String(buf), 'utf8')
     child.stdout?.on('data', pick)
     child.stderr?.on('data', pick)
-    child.on('exit', (code) => log(`刷B站结束（${why}，code=${code}）`))
+    child.on('exit', (code) => {
+      log(`刷B站结束（${why}，code=${code}）`)
+      // ⭐ 发完评论之后**过一会儿再核一次**（2026-10-16 加的「评论发出后复核」）：
+      //    接口回"发送成功"≠ 公开可见（新号/风控会进审核）；而"不公开"时连 @ 通知都不会推 ⇒
+      //    插件会以为发了、下一轮不再发 ⇒ 一条都没到人。等 90 秒再查，避免把"还在审核"误判成"没发出去"。
+      setTimeout(() => { Promise.resolve(runVerify('round')).catch((e) => log('复核异常：' + (e?.message ?? e))) }, 90_000)
+    })
     child.on('error', (e) => log(`刷B站起不来：${e?.message ?? e}`))
     return { started: true, why, profile: cfg.headlessProfile, cwd, log: logFile }
    } catch (e) {
@@ -671,10 +702,10 @@ export function apply(ctx, config) {
       writeFileSync(seenFile, [
         '# 刷B站 · 判重表（宿主预建，那一轮只往后面追加）',
         '',
-        '## 评论记录（BV | rpid | 时间 | 正文前 20 字）',
+        '## 评论记录（BV | rpid | root（楼中楼才填） | 时间 | 正文前 20 字）',
         '',
-        '| BV | rpid | 时间 | 正文前 20 字 |',
-        '| --- | --- | --- | --- |',
+        '| BV | rpid | root（楼中楼才填） | 时间 | 正文前 20 字 |',
+        '| --- | --- | --- | --- | --- |',
         '',
         '## 看过的视频',
         '',
@@ -884,6 +915,10 @@ export function apply(ctx, config) {
     if (req.method === 'POST' && path === '/api/bili-duty/install-asr') {
       return sendJson(res, 200, runAsrInstall())
     }
+
+    // ⭐ 「复核评论」：拿判重表里最近的记录，去 B站 核一遍到底公开可见没有
+    //    （设置页那个按钮、以及每轮结束 90 秒后自动跑一次，都走这里）
+    if (req.method === 'POST' && path === '/api/bili-duty/verify') return sendJson(res, 200, await runVerify('manual'))
 
     // 「看今天的报告」：把报告的文本读出来给设置页显示（浏览器不能直接开本地文件 ✗）
     if (req.method === 'GET' && path === '/api/bili-duty/report') {

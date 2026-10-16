@@ -54,6 +54,22 @@ ok(!readme.includes('add dsh-bili-duty'), 'README 里还留着旧包名 dsh-bili
 ok(!readme.includes('工作目录 = 你填的工作区'), 'README 里还写着"工作目录 = 你的工作区"（是错的）')
 ok(readme.includes('优先用那里那一份'), 'README 没写 uv.exe 手动兜底')
 
-console.log(fail.length ? '❌ 有 ' + fail.length + ' 条没过：' : '✅ 全部 ' + 21 + ' 条断言通过')
+// ⑦ 评论发出后复核（2026-10-16 加的）
+const verify = readFileSync(P + 'lib/verify.mjs', 'utf8')
+ok(idx.includes("from './lib/verify.mjs'"), 'index.js 没 import 复核模块')
+ok(idx.includes('const runVerify = async (why'), 'index.js 里没有 runVerify')
+ok(idx.includes("path === '/api/bili-duty/verify'"), '没有 /verify 路由')
+ok(idx.includes('90_000'), '跑完一轮后的自动复核没挂上')
+ok(idx.includes('rpid **') === false, '不该在这里出现报告文案')   // 文案在 verify.mjs 里
+ok(verify.includes('不等于没发出去'), 'verify.mjs 没守住"看不到不等于没发出去"的措辞')
+ok(verify.includes('reply/reply?type=1&oid='), 'verify.mjs 没走楼中楼接口')
+ok(verify.includes('mode=2'), 'verify.mjs 没走"按时间最新一页"')
+ok(cli.includes('onVerify'), 'client.js 没有复核按钮的处理函数')
+ok(cli.includes("'复核评论'"), 'client.js 没有「复核评论」按钮')
+ok(idx.includes('root（楼中楼才填）'), '预建的判重表没有 root 列（楼层里的那条就核不了）')
+ok(duty.includes('根评论的 rpid 记在同一行'), 'duty.md 没要求记 root')
+
+const TOTAL = 33
+console.log(fail.length ? '❌ 有 ' + fail.length + ' 条没过：' : `✅ 全部 ${TOTAL} 条断言通过`)
 for (const f of fail) console.log('   - ' + f)
 process.exit(fail.length ? 1 : 0)
