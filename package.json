@@ -41,6 +41,9 @@
     "@deepseek-ai/dsh-tools": "*",
     "@deepseek-ai/schemastery": "*"
   },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-llm": {
       "optional": true

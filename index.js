@@ -14,8 +14,14 @@
  * 这样凭证 `bili_credential.json` 落在家里而不是插件包里）/ `duty.md` / `out/` / `duty.log`。
  * ============================================================================
  */
-import z from '@deepseek-ai/schemastery'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { loadHostDeps } from './lib/hostdeps.mjs'
+
+// ⭐ 这两样从**宿主那棵树**里取（拿不到就退到自己的依赖；再拿不到，defineTool 用本地等价实现）。
+//    起因（2026-10-16 用户递来的完整报告 + 本机复现）：它们是 optional peer，
+//    桌面版 profile 是 `autoInstallPeers: false` ⇒ 永远不装 ⇒ **裸 import 会让整条插件不激活** ✗。
+const hostDeps = await loadHostDeps()
+const z = hostDeps.z
+const defineTool = hostDeps.defineTool
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -35,7 +41,9 @@ export const inject = ['webServer', 'tools', 'settings']
  *    "Plugin entry … has no volatile fields"。另外两个条件是：
  *    **loader entry 的 id 必须等于命名空间名**（我们 patch 里就是 `bili-duty`）+ **本模块导出 Config**。
  */
-export const Config = z.object({
+// ⚠️ schemastery 彻底拿不到时，这里会是 undefined —— **插件照常加载**，只是设置页降级
+//    （宁可少一个设置页，也不能因为一个 import 让整条插件不激活 ✗）
+export const Config = !z ? undefined : z.object({
   /** 定量刷：每天最多挑几条 */
   perDay: z.natural().default(5).extra('volatile', true),
   /** 峰谷自动刷（总开关） */
@@ -127,6 +135,9 @@ export function apply(ctx, config) {
     try { appendFileSync(logFile, line + '\n', 'utf8') } catch { /* 日志写不进去也不致命 */ }
     try { ctx.logger?.info?.(`[bili-duty] ${msg}`) } catch { /* 没有 logger 就算了 */ }
   }
+
+  // 宿主依赖是从哪儿取的（桌面版那次事故的排查看这里：duty.log 里会写明白）
+  for (const n of hostDeps.notes) log(n)
 
   /**
    * ⚠️ 2026-10-14 事故（第一次挂上就炸了整个 DSH，见当天的 lesson）：

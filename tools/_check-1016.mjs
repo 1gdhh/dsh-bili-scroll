@@ -69,7 +69,17 @@ ok(cli.includes("'复核评论'"), 'client.js 没有「复核评论」按钮')
 ok(idx.includes('root（楼中楼才填）'), '预建的判重表没有 root 列（楼层里的那条就核不了）')
 ok(duty.includes('根评论的 rpid 记在同一行'), 'duty.md 没要求记 root')
 
-const TOTAL = 33
+// ⑧ 桌面版那条加载失败的修复（2026-10-16：optional peer 解析不到 ⇒ 整条插件不激活）
+const hostdeps = readFileSync(P + 'lib/hostdeps.mjs', 'utf8')
+const pkg = JSON.parse(readFileSync(P + 'package.json', 'utf8'))
+ok(!/^import .*from '@deepseek-ai\//m.test(idx), 'index.js 顶部还在裸 import @deepseek-ai/*（桌面版会整条不激活）')
+ok(idx.includes("from './lib/hostdeps.mjs'"), 'index.js 没 import hostdeps')
+ok(hostdeps.includes('candidateRoots'), 'hostdeps 里没有候选根探测')
+ok(hostdeps.includes('localDefineTool'), 'hostdeps 里没有本地 defineTool 兜底')
+ok(!!pkg.dependencies?.['@deepseek-ai/schemastery'], 'package.json 的 dependencies 里没有 schemastery')
+ok(idx.includes('export const Config = !z ? undefined : z.object('), 'Config 没有做"拿不到 schemastery 就降级"的保护')
+
+const TOTAL = 39
 console.log(fail.length ? '❌ 有 ' + fail.length + ' 条没过：' : `✅ 全部 ${TOTAL} 条断言通过`)
 for (const f of fail) console.log('   - ' + f)
 process.exit(fail.length ? 1 : 0)

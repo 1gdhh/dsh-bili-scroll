@@ -23,19 +23,26 @@
 
 ## ⚠️ 已知环境差异（有用户反馈）
 
-- **桌面版 DSH（NEXT）/ 0.2.x**：本插件跑那一轮用的是 `dsh --profile headless --patch <overlay> <prompt>`，
-  **只在 npm 0.1.7-rc.x + web profile 上实测过** ✓。桌面版上有人反馈"自动跑会卡住" ——
-  **先跟用户确认 dsh 版本与 profile**，别硬跑；跑不起来就先只用手动「现在跑一轮」。
+- ⭐⭐ **桌面版 DSH（NEXT）/ 0.2.x 装不起来 —— 已知真 bug，0.1.4 起已修**：0.1.3 及以前装到桌面版上，
+  设置页里**根本不出现「刷B站」**，DSH 只留一句 `warning: 1 entry did not activate … failed to import` ✓
+  （根因：宿主半 import 的 `@deepseek-ai/schemastery` / `dsh-tools` 是 *optional peer*，而桌面版 profile 是
+  `autoInstallPeers: false` ⇒ pnpm 永远不装；`dsh-tools` 自己还带 4 个 peer，光装它也救不回来 ✗）。
+  ⇒ **遇到桌面版用户：先让他升级到 0.1.4+**（修法是：不再裸 import `@deepseek-ai/*` ——
+  `lib/hostdeps.mjs` 先找宿主那棵树、再退到自己依赖里那份，`defineTool` 拿不到就用**本地等价实现**；
+  `schemastery` 也正式进了 `dependencies` ✓）。升级后还不行，要 `duty.log` 里那几行
+  （里面会写"宿主依赖是从哪儿取的" ✓）。
+- **桌面版上"自动跑会卡"**：跑那一轮用的是 `dsh --profile headless --patch <overlay> <prompt>` ——
+  有用户反馈桌面版上会卡在那儿。**先确认 dsh 版本与 profile**，别硬跑；跑不起来就先只用手动「现在跑一轮」。
 - **别让用户自己去装环境** ✗：插件自带一份 uv 与依赖安装能力，先照上面第 1 条处理。
 
 ## 仓库结构（改代码时看这里）
 
 - `index.js` —— host 半端：11 个工具 + 谷时定时器 + HTTP 接口 + 设置命名空间
 - `client.js` —— 浏览器半端：设置页（注册在 `settings.section`）
-- `lib/` —— 状态目录与家目录 / 极小的 MCP stdio 客户端 / 扫码登录
+- `lib/` —— 状态目录与家目录 / 极小的 MCP stdio 客户端 / 扫码登录 / **`hostdeps.mjs`（从宿主树取 `@deepseek-ai/*`，拿不到就退到自己依赖 / 本地等价实现）** / **`verify.mjs`（评论发出后复核）**
 - `prompts/duty.md` —— 一轮要做的事（判定口径 + 红线，**用户可以改**）
 - `vendor/bilibili-mcp/` —— 内置的 Python MCP（MIT，AGI_Ananas）
-- `selfcheck.mjs` + `tools/` —— 本地预检：`node --import ./tools/register.mjs selfcheck.mjs`
+- `selfcheck.mjs` + `tools/` —— 本地预检：`node selfcheck.mjs`（**现在不用解析钩子了**；`tools/register.mjs` 那条还留着当备份）
 
 ## 约定
 
