@@ -408,7 +408,7 @@ window.__ModuleLoader__.load({
               h('button', { 'data-bd-btn': '', disabled: busy === 'asr', onClick: onInstallAsr },
                 st.asrReady ? '重装转写依赖' : '装转写依赖'),
               h('div', { 'data-bd-note': '' },
-                !st.asrReady ? '还没装 —— 没装的话转写用不了'
+                !st.asrReady ? '还没装 —— 现在开着也没用：没字幕的视频会被跳过（报告里会写"因无字幕跳过 N 条"）'
                   : (st.asrModelReady ? '环境和模型都好了' : '环境好了；模型会在第一次转写时自动下（几百 MB）'))),
             h('div', { 'data-bd-note': '' },
               '点一下就好：建一个独立环境、装 faster-whisper + yt-dlp，并把 Whisper 模型也下好',

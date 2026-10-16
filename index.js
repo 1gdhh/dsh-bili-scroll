@@ -72,6 +72,19 @@ export const Config = z.object({
   replyPerRound: z.number().default(1).extra('volatile', true),
 })
 
+/**
+ * ⭐ 给所有 Python 子进程统一 UTF-8。
+ * 起因（2026-10-16，用户在评论区反馈）：Windows 上 Python 默认按 GBK 编解码，
+ * 我们的脚本 / 内置 MCP 都会往管道里打中文与 emoji（`✅`、`—` 之类），一进管道就可能
+ * 报 UnicodeDecodeError / 乱码或直接中断。**编码这种环境差异，插件该自己钉死，不该让用户碰。**
+ */
+const pyEnv = (extra = {}) => ({
+  ...process.env,
+  PYTHONUTF8: '1',
+  PYTHONIOENCODING: 'utf-8',
+  ...extra,
+})
+
 export function apply(ctx, config) {
   const pluginDir = dirname(fileURLToPath(import.meta.url))
   // ⭐ 自己的版本号（从 package.json 读，设置页要显示它）
@@ -175,6 +188,9 @@ export function apply(ctx, config) {
       command: cfg.pythonPath || 'python',
       args: [script],
       cwd: stateDir,                     // 凭证落在家里 ✓
+      // ⭐ 这个内置的 Python MCP 会往 stdout 打中文（ensure_ascii=False）；
+      //    Windows 默认 GBK 的话，中文/emoji 一进管道就可能炸 ⇒ 钉死 UTF-8
+      env: pyEnv(),
       log,
     })
     return mcp
@@ -458,7 +474,14 @@ export function apply(ctx, config) {
           ? `这一轮不要写日报文件，也别生成任何报告；只有真发了评论就一句话记下。`
           : `把报告写到 ${join(outDir, `${dayKey()}.md`)}。`)
       + `今天最多挑 ${cfg.perDay} 条；关键词${kws.length ? `用这些：${kws.join('、')}` : '用章程里的默认那几组'}。`
-      + `本地转写是${cfg.transcribe ? '开着的（没字幕就用家目录里的 asr.py 转，命令见章程）' : '关着的（没字幕就跳过）'}；`
+      + `本地转写：${cfg.transcribe
+        ? (asrReadyNow()
+          ? '开着，而且装好了（没字幕的视频用家里那份 asr.py 转，命令见章程）'
+          : '**开着、但依赖没装好** ⇒ 这一轮没字幕的视频只能跳过')
+        : '关着（没字幕的视频就跳过）'}；`
+      + `⭐ 不管哪种情况，**报告里都要写一行「因无字幕跳过 N 条」**（N=0 也写）—— 别让它悄悄少几条。`
+      + `判重表 = ${join(stateDir, 'seen.md')}（**就是这个绝对路径**，别写到家目录 ~、也别写到别处）；`
+      + `⚠️ 它读不出来或写不进去，**必须在报告里明说** —— 那一轮宁可不发评论，也别当成"没有记录"重发一遍。`
       + `自动评论并 @ ${cfg.mentionName || '（还没填要 @ 谁）'} 是${cfg.autoComment && cfg.mentionName
         ? `开着的（每轮最多 ${cfg.commentPerRound} 条评论，每条在正文里纯文本 @ ${cfg.mentionName}，150 字内）`
         : '关着的（只写报告，别发评论）'}。`
@@ -513,7 +536,9 @@ export function apply(ctx, config) {
       shell: dsh.shell,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, BILI_DUTY_HOME: stateDir },
+      // ⭐ PYTHONUTF8 / PYTHONIOENCODING：Windows 上 Python 默认按 GBK 编解码，
+      //    中文 / emoji 打进管道会炸（用户反馈过 UnicodeDecodeError），一律按 UTF-8 来
+      env: pyEnv({ BILI_DUTY_HOME: stateDir }),
     })
     const pick = (buf) => appendFileSync(logFile, String(buf), 'utf8')
     child.stdout?.on('data', pick)
@@ -617,7 +642,7 @@ export function apply(ctx, config) {
   const spawnLogged = (cmd, args) => new Promise((resolve) => {
     appendInstall(`\n$ ${cmd} ${args.join(' ')}\n`)
     let c
-    try { c = spawn(cmd, args, { cwd: stateDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }) }
+    try { c = spawn(cmd, args, { cwd: stateDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: pyEnv() }) }
     catch (e) { appendInstall(`起不来：${e?.message ?? e}\n`); return resolve(1) }
     const w = (b) => appendInstall(String(b))
     c.stdout?.on('data', w)
@@ -636,6 +661,26 @@ export function apply(ctx, config) {
   //    而沙箱只允许写"该子进程启动前就已存在"的目录（2026-10-14 那一轮自己挖出来的规则）
   const asrTmp = join(stateDir, 'tmp', 'asr')
   try { mkdirSync(asrTmp, { recursive: true }) } catch { /* 建不了也别拦着插件加载 */ }
+
+  // ⭐ 判重表也由**宿主**预先建好（两个原因）：
+  //   ① 那一轮被沙箱关着，"新建文件"会被拒（2026-10-14 那条规矩）；
+  //   ② 它读不出判重表 ⇒ 以为"没记录过" ⇒ 同一批视频反复推送（用户实测反馈 2026-10-16）。
+  const seenFile = join(stateDir, 'seen.md')
+  try {
+    if (!existsSync(seenFile)) {
+      writeFileSync(seenFile, [
+        '# 刷B站 · 判重表（宿主预建，那一轮只往后面追加）',
+        '',
+        '## 评论记录（BV | rpid | 时间 | 正文前 20 字）',
+        '',
+        '| BV | rpid | 时间 | 正文前 20 字 |',
+        '| --- | --- | --- | --- |',
+        '',
+        '## 看过的视频',
+        '',
+      ].join('\n'), 'utf8')
+    }
+  } catch { /* 建不了也别拦着插件加载 */ }
   let installingAsr = false
 
   /** 找 uv：系统里的 → 插件家里下好的 → 自己下一份（给"两样都没有"的人）；主/转写两套安装共用 */
@@ -655,7 +700,7 @@ export function apply(ctx, config) {
     let c
     try {
       c = spawn(cmd, args, { cwd: stateDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-        env: env ? { ...process.env, ...env } : process.env })
+        env: pyEnv(env || {}) })
     } catch (e) { sink(`起不来：${e?.message ?? e}\n`); return resolve(1) }
     const w = (b) => sink(String(b))
     c.stdout?.on('data', w)
