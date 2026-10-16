@@ -95,9 +95,17 @@ ok(duty.includes('一句俏皮话能收住就回'), '轻互动的出口没写清
 ok(duty.includes('一律不回'), '没有列出"不回"的清单')
 ok(duty.includes('每条正文 ≤100 字'), '回复没有长度上限')
 ok(duty.includes('最多用 2 次工具调用'), '回复没有工具调用上限')
-ok(duty.includes('拿不准该不该回就跳过'), '没有"拿不准就跳过"的出口')
+ok(duty.includes('想不清楚、或者拿不准该不该回 —— 直接跳过') || duty.includes('拿不准该不该回就跳过'), '没有"拿不准就跳过"的出口')
 
-const TOTAL = 51
+// ⑪ 归档（"它刷过什么"可检索）+ 日志轮转（2026-10-16 主人要的"学习"地基）
+ok(idx.includes("const digestDir = join(stateDir, 'digest')"), 'index.js 没有预建 digest 目录')
+ok(/const digestDir[\s\S]{0,400}mkdirSync\(digestDir/.test(idx), 'digest 目录没有真的建')
+ok(idx.includes('追加进归档'), '提示词里没有要求写归档')
+ok(idx.includes('rotateLogIfBig'), '没有日志轮转（duty.log 三天 797KB ⇒ 一年约 100MB）')
+ok(idx.includes('rotateLogIfBig()'), '日志轮转没挂在那一轮结束时')
+ok(duty.includes('归档是给"以后回头翻"用的') || duty.includes('报告是给人看的，归档是给'), 'duty.md 没写归档要求')
+
+const TOTAL = 57
 console.log(fail.length ? '❌ 有 ' + fail.length + ' 条没过：' : `✅ 全部 ${TOTAL} 条断言通过`)
 for (const f of fail) console.log('   - ' + f)
 process.exit(fail.length ? 1 : 0)
