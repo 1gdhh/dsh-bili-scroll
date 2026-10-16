@@ -467,9 +467,13 @@ export function apply(ctx, config) {
     //    所以"使用者的设定"由**我们自己读进来**喂给它 —— 它在宿主进程里跑，没有沙箱限制 ✓
     let ownerDoc = ''
     try {
-      const wsDir = String(cfg.workspace || '').trim() || process.cwd()
-      const agents = join(wsDir, 'AGENTS.md')
-      if (existsSync(agents)) {
+      // ⚠️ 2026-10-16 用户反馈（"只要给人设就会走偏"）：留空时我们以前退到 `process.cwd()`，
+      //    也就是 **dsh 进程自己的工作目录** —— 那对多数人根本不是他的工作区 ✗
+      //    ⇒ 读错人设、甚至把别的目录的设定读进来 ✓
+      //    ⭐ 现在的规矩：**留空 = 不读设定**（宁可按中性说话，也别猜错 ✓）；要按人设就自己填工作区 ✓。
+      const wsDir = String(cfg.workspace || '').trim()
+      const agents = wsDir ? join(wsDir, 'AGENTS.md') : ''
+      if (agents && existsSync(agents)) {
         const text = readFileSync(agents, 'utf8')
         ownerDoc = '\n\n===== 使用者的 AGENTS.md（他写给自己 AI 的人设与准则，**按这个来**）=====\n'
           + text.slice(0, 6000)
@@ -479,6 +483,9 @@ export function apply(ctx, config) {
     return `你是这个账号的 B站 助手。`
       + `下面是使用者的设定（如果有）—— **按它来**，别用你默认那套人格。`
       + ownerDoc
+      + (ownerDoc
+        ? ''
+        : '⭐ 这一轮**没有**拿到使用者的设定（他没填「工作区」，或那个目录里没有 `AGENTS.md`）⇒ **按中性说话**：别扮演任何人、也别自己编一套设定 ✓。')
       + `然后读章程 ${duty}，按里面的要求刷一轮 B站，`
       + (cfg.reportLevel === 'brief'
         ? `日报写成薄版：每条一两行（值不值得 + 链接）就够，别写长摘要。`

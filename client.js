@@ -442,9 +442,14 @@ window.__ModuleLoader__.load({
           }),
           h('div', { 'data-bd-label': '' }, '工作区（它按这里的 AGENTS.md 认设定）'),
           h('input', {
-            'data-bd-input': '', value: ws ?? '', placeholder: '留空 = dsh 自己的工作目录',
+            'data-bd-input': '', value: ws ?? '',
+            placeholder: '填你自己的工作区路径（留空 = 不读人设，按中性说话）',
             onChange: (e) => setWs(e.target.value),
           }),
+          h('div', { 'data-bd-note': '' },
+            '⭐ 想让它按你的设定说话，这里要填你自己平时用的那个工作区（放 AGENTS.md 的那个目录）；',
+            h('br'),
+            '留空不等于"用你的工作区" —— 那是不读设定、按中性说话（以前会去猜 dsh 进程自己的目录，容易读错人设）。'),
           h('div', { 'data-bd-label': '' }, '日报写多细'),
           h('select', {
             'data-bd-input': '', value: rl ?? 'full',
