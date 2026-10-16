@@ -79,7 +79,14 @@ ok(hostdeps.includes('localDefineTool'), 'hostdeps 里没有本地 defineTool �
 ok(!!pkg.dependencies?.['@deepseek-ai/schemastery'], 'package.json 的 dependencies 里没有 schemastery')
 ok(idx.includes('export const Config = !z ? undefined : z.object('), 'Config 没有做"拿不到 schemastery 就降级"的保护')
 
-const TOTAL = 39
+// ⑨ 「空 = 结果，不是坏了」+ 保底产物（2026-10-16 用户反馈：卡在转写空输出上重试 27 次，最后报告空）
+ok(duty.includes('"空"是一种结果，不是坏了'), 'duty.md 没定义"空输出是结果"')
+ok(duty.includes('因此去写'), 'duty.md 没禁止现场写 debug 脚本')
+ok(duty.includes('保底（不管这一轮发生什么'), 'duty.md 没写"保底产物"')
+ok(idx.includes('stubReportIfMissing'), 'index.js 没有"没写报告就补占位报告"的兜底')
+ok(idx.includes('stubReportIfMissing(code)'), '兜底没挂在那一轮结束时')
+
+const TOTAL = 44
 console.log(fail.length ? '❌ 有 ' + fail.length + ' 条没过：' : `✅ 全部 ${TOTAL} 条断言通过`)
 for (const f of fail) console.log('   - ' + f)
 process.exit(fail.length ? 1 : 0)

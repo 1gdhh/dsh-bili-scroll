@@ -553,6 +553,35 @@ export function apply(ctx, config) {
     } finally { verifying = false }
   }
 
+  /**
+   * ⭐ 保底：那一轮**没写出报告**时，宿主自己补一份"占位报告"。
+   * 起因（2026-10-16 用户实测反馈）：有一轮卡在"转写返回空 ⇒ 以为 ASR 坏了"上反复重试，
+   *   最后 `out/` 是空的、判重表也没建 ⇒ **使用者完全看不到发生了什么**，也不知道白烧了钱 ✗。
+   * ⚠️ 只在"报告本来该有却没有"时补（`reportLevel: off` 不补 ✓），不覆盖已有的报告 ✓。
+   */
+  const stubReportIfMissing = (code) => {
+    try {
+      if (String(cfg.reportLevel || 'full') === 'off') return
+      const f = join(outDir, `${dayKey()}.md`)
+      if (existsSync(f)) return
+      let tail = ''
+      try { tail = readFileSync(logFile, 'utf8').slice(-1500) } catch { /* 读不到就算了 */ }
+      writeFileSync(f, [
+        `# 刷B站 · ${dayKey()} —— 这一轮没写出报告`,
+        '',
+        `> ⚠️ 那一轮结束了，但没有生成正常报告（退出码 ${code}）。`,
+        '> 常见原因是它卡在某个工具上反复重试、或者把预算烧完了。下一轮它会重来。',
+        '> 下面附日志尾部，方便定位（插件数据目录里的 `duty.log` 有完整版）。',
+        '',
+        '```',
+        String(tail).trim(),
+        '```',
+        '',
+      ].join('\n'), 'utf8')
+      log('这一轮没写报告 ⇒ 宿主补了一份占位报告')
+    } catch (e) { log(`补占位报告失败：${e?.message ?? e}`) }
+  }
+
   const runDuty = (why = 'window') => {
    try {
     const dsh = resolveDsh()
@@ -581,6 +610,7 @@ export function apply(ctx, config) {
     child.stderr?.on('data', pick)
     child.on('exit', (code) => {
       log(`刷B站结束（${why}，code=${code}）`)
+      stubReportIfMissing(code)   // ⭐ 没写报告就补一份占位 —— 别让使用者什么都看不到
       // ⭐ 发完评论之后**过一会儿再核一次**（2026-10-16 加的「评论发出后复核」）：
       //    接口回"发送成功"≠ 公开可见（新号/风控会进审核）；而"不公开"时连 @ 通知都不会推 ⇒
       //    插件会以为发了、下一轮不再发 ⇒ 一条都没到人。等 90 秒再查，避免把"还在审核"误判成"没发出去"。
