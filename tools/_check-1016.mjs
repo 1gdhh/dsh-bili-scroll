@@ -105,7 +105,13 @@ ok(idx.includes('rotateLogIfBig'), '没有日志轮转（duty.log 三天 797KB �
 ok(idx.includes('rotateLogIfBig()'), '日志轮转没挂在那一轮结束时')
 ok(duty.includes('归档是给"以后回头翻"用的') || duty.includes('报告是给人看的，归档是给'), 'duty.md 没写归档要求')
 
-const TOTAL = 57
+// ⑫ 0.1.6 的两颗雷（2026-10-16 用户报的 GitHub issue #1 / #5 / #6 / #7）
+ok(/const pick = \(buf\) => \{[\s\S]{0,400}try \{ appendFileSync/.test(idx), '接子进程输出的 pick 没包 try/catch（EBUSY 会杀掉整个宿主）')
+ok(idx.includes('ELECTRON_RUN_AS_NODE'), '桌面版 spawn 没带 ELECTRON_RUN_AS_NODE=1')
+ok(idx.includes('process.resourcesPath'), '桌面版找不到 dsh 时没有去应用目录里找')
+ok(idx.includes('找不到 dsh'), '找不到 dsh 时没有出声（静默失败）')
+
+const TOTAL = 61
 console.log(fail.length ? '❌ 有 ' + fail.length + ' 条没过：' : `✅ 全部 ${TOTAL} 条断言通过`)
 for (const f of fail) console.log('   - ' + f)
 process.exit(fail.length ? 1 : 0)

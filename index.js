@@ -448,7 +448,22 @@ export function apply(ctx, config) {
       '/usr/local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js',
       '/usr/lib/node_modules/@deepseek-ai/dsh/lib/bin.js',
     ].filter(Boolean)
+    // ⭐ 2026-10-16（issue #5 / #6 / #7）：**桌面版是 Electron 安装包，不是 npm -g 装的** ⇒ 上面几条全找不到
+    //    ⇒ 老逻辑退到 `dsh`（PATH 里没有这个命令）⇒ 那一轮必败、而且只留下一句 exit 1 ✗
+    //    桌面版把 dsh 打在应用里 ⇒ 按 `process.resourcesPath` 猜几个位置（找到就用；找不到就**明说**）
+    if (process.resourcesPath) {
+      for (const rel of [
+        ['app.asar.unpacked', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'],
+        ['app', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'],
+        ['node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'],
+      ]) {
+        const p = join(process.resourcesPath, ...rel)
+        if (existsSync(p)) return { command: process.execPath, args: [p], shell: false }
+      }
+    }
     for (const g of guesses) if (existsSync(g)) return { command: process.execPath, args: [g], shell: false }
+    // ⚠️ 走到这儿就是真找不到 —— 一定要出声（静默失败比报错更坏）
+    log('⚠️ 找不到 dsh：桌面版多半不是 npm 全局安装的 ⇒ 请在设置里把「dsh 路径」指到 <应用目录>/…/@deepseek-ai/dsh/lib/bin.js，或改用 npm 装的 dsh')
     return { command: 'dsh', args: [], shell: true }
   }
 
@@ -613,9 +628,17 @@ export function apply(ctx, config) {
       stdio: ['ignore', 'pipe', 'pipe'],
       // ⭐ PYTHONUTF8 / PYTHONIOENCODING：Windows 上 Python 默认按 GBK 编解码，
       //    中文 / emoji 打进管道会炸（用户反馈过 UnicodeDecodeError），一律按 UTF-8 来
-      env: pyEnv({ BILI_DUTY_HOME: stateDir }),
+      // ⭐ ELECTRON_RUN_AS_NODE：**桌面版（Electron）里 spawn 出去的 node 必须带这个**，
+      //    否则它当成"再开一个 Electron 应用"、什么都不干就以 0 退出（issue #5：0.17 秒、code 0、什么都没做）
+      env: pyEnv({ BILI_DUTY_HOME: stateDir, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }),
     })
-    const pick = (buf) => appendFileSync(logFile, String(buf), 'utf8')
+    // ⚠️ 2026-10-16 issue #1（用户 `miaoxingyunduo` 贴了崩溃日志）：`duty.log` 被别的进程占着时
+    //    (`EBUSY`) `appendFileSync` 会抛异常 —— 而这里是 **stream 的 data 回调**，没人接
+    //    ⇒ **未捕获异常 ⇒ 整个 DSH 宿主被杀**（所有会话一起没）。跟 10-14 定时器那次是同一类 ✗
+    //    ⇒ ⭐ 规矩：**插件里任何写日志/写文件的地方都包好 try/catch**，再错也只该"这一轮没跑成" ✓
+    const pick = (buf) => {
+      try { appendFileSync(logFile, String(buf), 'utf8') } catch { /* 写不进去就丢，绝不能抛 */ }
+    }
     child.stdout?.on('data', pick)
     child.stderr?.on('data', pick)
     child.on('exit', (code) => {
