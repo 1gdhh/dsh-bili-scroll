@@ -234,7 +234,16 @@ export function apply(ctx, config) {
     if (!row) return clampPatch(saved)
     const user = row.user || {}
     const out = { ...hostCfg() }
-    for (const k of Object.keys(DEFAULTS)) if (user[k] === undefined) out[k] = saved[k]
+    // ⚠️ 2026-10-18（用户实证 + 他的 dsh 定位）：`pythonPath` 是**装依赖时自动写的**，
+    //    但它一旦在 DSH 原生设置里有过值（默认 "python"），就会被宿主覆盖回来 ⇒
+    //    「重装依赖」日志写着"已把 pythonPath 设为 venv"，实际生效的还是系统那个空壳 python
+    //    ⇒ 画二维码 import 不到 qrcode ⇒ **永远不出码** ✗
+    //    ⇒ 这个键不让宿主对账（它由插件自己算出来，不该被界面上的旧值压住）
+    const HOST_WINS_EXCLUDED = new Set(['pythonPath'])
+    for (const k of Object.keys(DEFAULTS)) {
+      if (HOST_WINS_EXCLUDED.has(k)) { out[k] = saved[k]; continue }
+      if (user[k] === undefined) out[k] = saved[k]
+    }
     return clampPatch(out)
   }
   const cfg = loadCfg()
@@ -1135,8 +1144,11 @@ export function apply(ctx, config) {
           if (code !== 0) code = await spawnLogged(venvPy, ['-m', 'pip', 'install', '-i', m, '-r', reqFile])
         }
         if (code === 0 && existsSync(venvPy)) {
-          await persistCfg({ pythonPath: venvPy })   // ⭐ 不然设置页里显式设过 pythonPath 的话，这里就白写了
-          appendInstall(`已把 pythonPath 设为 ${venvPy}\n`)
+          // ⚠️ 光写 config.json 不够：DSH 原生设置里那份旧值（"python"）会在 loadCfg 时压回来
+          //    （已由 loadCfg 的 HOST_WINS_EXCLUDED 解决 ✓）；这里再把宿主的同步结果说清楚，
+          //    免得以后再出现"日志说设好了、实际没生效" ✗
+          const r = await persistCfg({ pythonPath: venvPy })
+          appendInstall(`已把 pythonPath 设为 ${venvPy}（DSH 那边${r?.host?.ok ? '已同步' : '没写成：' + (r?.host?.error || '未知原因')}）\n`)
         }
         {
           const miss = missingVenvDeps()
