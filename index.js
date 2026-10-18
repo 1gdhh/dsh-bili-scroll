@@ -281,11 +281,24 @@ export function apply(ctx, config) {
         throw Object.assign(new Error('DSH 这边没有可写的设置表单（值只落在插件自己的 config.json 里）'), { noForm: true })
       }
       await ctx.settings.update(row.ns, patch, row.revision)
+      // ⭐ READBACK（2026-10-18）：update() 不报错 ≠ 值真的生效 ✗
+      //   三四位用户装了 0.1.9 后开关照样弹回，而界面**没有**出现"没同步"提示
+      //   ⇒ 说明 host.ok 判成了成功、值却没落进生效层 ⇒ 必须**回读用户层**再确认一遍 ✓
+      const after = settingsDesc(true)
+      const user = after?.user || {}
+      const bad = Object.keys(patch).filter((k) => {
+        const want = patch[k]
+        const got = user[k]
+        if (Array.isArray(want)) return JSON.stringify(want) !== JSON.stringify(got)
+        if (want !== null && typeof want === "object") return true   // 配置里没有嵌套对象，出现就按没写进去处理
+        return String(got) !== String(want)
+      })
+      if (bad.length) throw Object.assign(new Error("写入没生效（读回来还是旧值）：" + bad.join(", ")), { stale: true })
       return row.ns
     }
     try { return { ok: true, ns: await attempt(false) } }
     catch (e) {
-      if (!e?.noForm) {   // revision 过期（刚有别人改过）⇒ 重取一次再写
+      if (!e?.noForm) {   // revision 过期 / 回读不一致 ⇒ 重取一次再写
         try { return { ok: true, ns: await attempt(true), retried: true } } catch (e2) { e = e2 }
       }
       log(`写 DSH 设置失败：${e?.message ?? e}`)
@@ -302,7 +315,13 @@ export function apply(ctx, config) {
     saveCfg(clean)
     const host = await saveCfgHost(clean)
     // 宿主写成功 ⇒ 恢复对账；失败 ⇒ 记成"本地优先"，别让界面把它们压回去
-    markOverride(Object.keys(clean), !host.ok)
+    // ⭐ 无条件本地优先（2026-10-18 第二次修）：
+    //   三四位用户装了 0.1.9、界面没有"没同步"提示、开关照样弹回
+    //   ⇒ 往 DSH 写这一步既没报错、回读也看不出差别，但**生效值仍是旧的**
+    //   （多半是 profile 层压过了 user 层）✗
+    //   ⇒ 不再指望 DSH 那边：只要是从**插件面板**保存的键，读配置时一律以插件自己那份为准 ✓
+    //   ⚠️ 代价：同名的项若在 DSH 原生设置页改，以插件面板为准（我们的设置页才是"正式的家"）。
+    markOverride(Object.keys(clean), true)
     if (!host.ok) log('⚠️ 这几项没能同步到 DSH 原生设置，改为以插件自己的值为准：' + Object.keys(clean).join(', ') + '（' + host.error + '）')
     return { clean, host }
   }
