@@ -137,6 +137,24 @@ export function apply(ctx, config) {
   const venvReadyNow = () => existsSync(venvPython()) && missingVenvDeps().length === 0
   const asrReadyNow = () => existsSync(asrPython()) && hasPkg(asrDir, 'faster_whisper')
   const cfgFile = join(stateDir, 'config.json')
+  /**
+   * 本地优先（2026-10-18，两个用户实证）：DSH 0.2.1 某些启动方式下 ctx.settings.update 会抛
+   *   profile reload requires the root Include entry（dsh-app-boot 的 reconcileProfilePatches）
+   *   ⇒ 写不进宿主 ⇒ 而 loadCfg 的规则是"宿主有值就以宿主为准" ⇒ 用户刚点的开关几秒后被压回原状，
+   *   表现成"开一个，另一个像被关掉"（其实是每个开关都在自己亮一下就被复位）。
+   * ⇒ 记一份"本地刚存、宿主没同步成功"的键，loadCfg 时这些键以本地为准；宿主同步成功就把它们删掉。
+   */
+  const overrideFile = join(stateDir, 'local-override.json')
+  const readOverride = () => {
+    try { const j = readJson(overrideFile, {}); return j && typeof j === 'object' ? j : {} } catch { return {} }
+  }
+  const markOverride = (keys, on) => {
+    try {
+      const cur = readOverride()
+      for (const k of keys) { if (on) cur[k] = Date.now(); else delete cur[k] }
+      writeFileSync(overrideFile, JSON.stringify(cur, null, 2), 'utf8')
+    } catch (e) { log('记 local-override 失败：' + (e && e.message ? e.message : e)) }
+  }
   const logFile = join(stateDir, 'duty.log')
   const outDir = join(stateDir, 'out')
   mkdirSync(outDir, { recursive: true })
@@ -240,8 +258,10 @@ export function apply(ctx, config) {
     //    ⇒ 画二维码 import 不到 qrcode ⇒ **永远不出码** ✗
     //    ⇒ 这个键不让宿主对账（它由插件自己算出来，不该被界面上的旧值压住）
     const HOST_WINS_EXCLUDED = new Set(['pythonPath'])
+    const ov = readOverride()   // 本地刚存、宿主没同步成功的键 ⇒ 以本地为准
     for (const k of Object.keys(DEFAULTS)) {
       if (HOST_WINS_EXCLUDED.has(k)) { out[k] = saved[k]; continue }
+      if (ov[k] !== undefined) { out[k] = saved[k]; continue }
       if (user[k] === undefined) out[k] = saved[k]
     }
     return clampPatch(out)
@@ -281,6 +301,9 @@ export function apply(ctx, config) {
     const clean = clampPatch(patch)
     saveCfg(clean)
     const host = await saveCfgHost(clean)
+    // 宿主写成功 ⇒ 恢复对账；失败 ⇒ 记成"本地优先"，别让界面把它们压回去
+    markOverride(Object.keys(clean), !host.ok)
+    if (!host.ok) log('⚠️ 这几项没能同步到 DSH 原生设置，改为以插件自己的值为准：' + Object.keys(clean).join(', ') + '（' + host.error + '）')
     return { clean, host }
   }
 
@@ -1203,6 +1226,9 @@ export function apply(ctx, config) {
       loggedIn: hasCredential(),
       venvReady: venvReadyNow(),
       version: myVersion(),
+      // 2026-10-18：这几项"本地存了、但没能同步到 DSH 原生设置" ⇒ 设置页要告诉用户
+      // （DSH 0.2.1 某些启动方式会拒写：profile reload requires the root Include entry）
+      notSynced: Object.keys(readOverride()),
       installFailed: !installing && !venvReadyNow() && (() => { try { return readFileSync(installLogFile, 'utf8').length > 0 } catch { return false } })(),
       installing,
       // ── 本地转写那一套的状态（设置页要显示进度）──
