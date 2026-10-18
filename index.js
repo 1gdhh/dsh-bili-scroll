@@ -717,25 +717,37 @@ export function apply(ctx, config) {
   }
 
   const ensureOverlay = () => {
-    if (!cfg.overlayMcp) return null
     const file = join(stateDir, 'headless-overlay.yml')
     const script = join(stateDir, 'mcp_server.py')
     const posix = (p) => String(p).replace(/\\/g, '/')
-    const yml = [
-      '- insert:',
-      '    - id: mcp-bili-duty',
-      "      name: '@deepseek-ai/dsh-mcp-client'",
-      '      config:',
-      '        serverName: bili-duty',
-      '        transport: stdio',
-      `        command: '${posix(cfg.pythonPath || 'python')}'`,
-      '        args:',
-      `          - '${posix(script)}'`,
-      '        env:',
-      `          BILI_MCP_TOOLS: '${mcpWhitelist().join(',')}'`,
-      '',
-    ].join('\n')
-    try { writeFileSync(file, yml, 'utf8'); return file } catch (e) { log(`写 overlay 失败：${e?.message ?? e}`); return null }
+    const yml = []
+    // ⭐⭐ 2026-10-18（用户 `Elec-Tron-lc` 递来完整报告，逐条核过）：
+    //    DSH **0.2.1-rc.2** 的 `@deepseek-ai/dsh-headless` 自带 patch 把三个服务 `disabled: true` 了 ——
+    //    `credentials` / `authorization` / `deepseek-account` ⇒ 那一轮既用不了账号模型、也读不到凭证库里的 key
+    //    （`resolveApiKey` 退到 env 也没有）⇒ `ACCOUNT_SIGN_IN_REQUIRED` / `NO_ADAPTER: buddy`。
+    //    ⭐ 我们的 overlay 是**最后**叠加的一层（bundle → profile → `--patch`）⇒ 在这里把它们打开，
+    //    用户什么都不用配（0.2.0 时代没这三条禁用，所以以前不炸）。
+    //    ⚠️ 老版本没有这些 id 时 DSH 会把未知条目当无事发生，不会因此起不来。
+    for (const id of ['credentials', 'authorization', 'deepseek-account']) {
+      yml.push('- id: ' + id, '  disabled: false', '')
+    }
+    if (cfg.overlayMcp) {
+      yml.push(
+        '- insert:',
+        '    - id: mcp-bili-duty',
+        "      name: '@deepseek-ai/dsh-mcp-client'",
+        '      config:',
+        '        serverName: bili-duty',
+        '        transport: stdio',
+        `        command: '${posix(cfg.pythonPath || 'python')}'`,
+        '        args:',
+        `          - '${posix(script)}'`,
+        '        env:',
+        `          BILI_MCP_TOOLS: '${mcpWhitelist().join(',')}'`,
+        '',
+      )
+    }
+    try { writeFileSync(file, yml.join('\n'), 'utf8'); return file } catch (e) { log(`写 overlay 失败：${e?.message ?? e}`); return null }
   }
 
   /**
