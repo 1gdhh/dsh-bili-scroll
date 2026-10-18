@@ -129,7 +129,12 @@ export function apply(ctx, config) {
   const hasPkg = (venvRoot, prefix) => {
     try { return readdirSync(sitePkgs(venvRoot)).some((n) => n.startsWith(prefix)) } catch { return false }
   }
-  const venvReadyNow = () => existsSync(venvPython()) && hasPkg(join(stateDir, '.venv'), 'bilibili_api')
+  // ⚠️ 2026-10-18 用户实测：徽章显示「环境已就绪」、B站也登录了，可一跑就 `ModuleNotFoundError: No module named 'mcp'`
+  //    ⇒ 原判据**只查了 bilibili_api**（0.1.2 修"假就绪"时留下的口子）⇒ 缺 `mcp` / `qrcode` 也照样说就绪 ✗
+  //    ⇒ 三个都得有：bilibili_api（查数据）· mcp（跑那一轮的 MCP 服务器）· qrcode（画登录二维码）
+  const VENV_DEPS = ['bilibili_api', 'mcp', 'qrcode']
+  const missingVenvDeps = () => VENV_DEPS.filter((n) => !hasPkg(join(stateDir, '.venv'), n))
+  const venvReadyNow = () => existsSync(venvPython()) && missingVenvDeps().length === 0
   const asrReadyNow = () => existsSync(asrPython()) && hasPkg(asrDir, 'faster_whisper')
   const cfgFile = join(stateDir, 'config.json')
   const logFile = join(stateDir, 'duty.log')
@@ -1133,8 +1138,11 @@ export function apply(ctx, config) {
           await persistCfg({ pythonPath: venvPy })   // ⭐ 不然设置页里显式设过 pythonPath 的话，这里就白写了
           appendInstall(`已把 pythonPath 设为 ${venvPy}\n`)
         }
-        appendInstall(`=== 结束（exit ${code}，venvReady=${venvReadyNow()}）===\n`)
-        log(`装依赖结束：exit=${code} venvReady=${existsSync(venvPy)}`)
+        {
+          const miss = missingVenvDeps()
+          appendInstall(`=== 结束（exit ${code}，venvReady=${venvReadyNow()}${miss.length ? '，缺：' + miss.join(' / ') : ''}）===\n`)
+          log(`装依赖结束：exit=${code} venvReady=${venvReadyNow()}${miss.length ? ' 缺：' + miss.join(',') : ''}`)
+        }
       } catch (e) {
         appendInstall(`装依赖崩了：${e?.stack ?? e}\n`)
         log(`装依赖崩了：${e?.message ?? e}`)
