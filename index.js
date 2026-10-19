@@ -245,6 +245,11 @@ export function apply(ctx, config) {
    *     · 都没有 ⇒ 默认值
    *   ⚠️ 老版本没记过 `_set` ⇒ 第一次跑时按"和默认值不一样"反推一遍，免得升级上来的老用户又被弹回。
    */
+  // ⚠️ 2026-10-19 事故（用户设置页停在"读设置中…"）：这两行以前漏了声明 ——
+  //   ESM 是严格模式，`hostDiff = diff` 直接抛 ReferenceError ⇒ loadCfg 挂 ⇒ /status 500
+  //   ⇒ 设置页永远读不到配置。**所有"正在用但没声明"的变量都是这种死法**，别再犯。
+  let hostDiff = []          // 插件这份和 DSH 原生设置那份不一样、且以插件为准的键
+  let lastDiffSig = ''       // 上一次记过日志的组合（同一种组合只写一行）
   let touchedKeys = (() => {
     const raw = readJson(cfgFile, {})
     if (Array.isArray(raw._set)) return new Set(raw._set)
