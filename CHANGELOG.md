@@ -1,3 +1,22 @@
+## 0.1.15 — 2026-10-19
+
+**修（两条社区 PR #33 / #37 里已经写好的真 bug，作者是 `wotorrrrr`）**
+
+- ⭐ **私信永远发不出去**（issue #25 / #16）：`mcpWhitelist()` 里压根没有 `bili_send_message`
+  ⇒ 私信开关打开、那一轮也跑了，模型手里却没有这只工具 ⇒ 一次都没发出去过。
+  现在 `dmMode` 不是 `off` **且**填了 `dmUid` 才把它放进白名单（关着就不给，白名单别松）。
+- ⭐ **`uv venv` 要钉 Python 3.10–3.13**（issue #15）：不给 `--python` 时 uv 拿"最新 CPython"（有人建出 3.15），
+  而 `av` / `ctranslate2` / `aiohttp` 在 3.14+ 没有 wheel ⇒ 转写依赖直接 ResolutionImpossible、主依赖卡在 cffi。
+  现在先 `--python 3.12`（可用 `BILI_DUTY_VENV_PYTHON` 覆盖），失败再退回 uv 默认。
+- 数据来源：这两条都是社区 `wotorrrrr` 的 PR（#33 / #37）先说清的，我们按他的判据自己实现（不整包合）。
+
+**待做（他另外两点先记下来）**
+
+- 老环境"Python 3.14+ 建的"要能识别并改名重建（他写了 `pyVerOfVenv` + `rebuildIfTooNew`）。
+- 数组类设置（keywords / 私信名单）不能用 `!==` 比较默认值 —— 两个空数组永远不等，会把 config.json 里的值盖成 `[]`。
+  我们判"非默认值"用的是 `JSON.stringify` 比较，暂时安全；但写新比较时别再犯。
+
+---
 ## 0.1.14 — 2026-10-19
 
 **修（桌面版上"开关还是自己弹回去"的最后一个缝）**

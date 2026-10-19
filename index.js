@@ -922,6 +922,10 @@ export function apply(ctx, config) {
   const mcpWhitelist = () => {
     const list = ['bili_search', 'bili_subtitle', 'bili_comments', 'bili_video_info']
     if (cfg.autoComment || cfg.replyToComments) list.push('bili_reply')   // 只有真要发评论才给这只
+    // ⭐ 2026-10-19（issue #25 / #16 的实证，做法参考社区 PR #37）：私信开着却忘了给 bili_send_message ⇒
+    //   模型手里压根没有这只工具 ⇒ 表现成"开关也开了、这一轮也跑了，但从来没发出去过" ✗
+    //   ⇒ dmMode 不是 off、且填了收件人 UID 才放进去（关着就不给，白名单别松）
+    if (String(cfg.dmMode || 'off') !== 'off' && Number(cfg.dmUid) > 0) list.push('bili_send_message')
     return list
   }
 
@@ -1292,7 +1296,16 @@ export function apply(ctx, config) {
         const uvCmd = await resolveUv()
         if (!existsSync(py)) {
           // --seed：把 pip 也装进去（uv 默认不给）—— 不然出现问题时连 pip 都没有，没法补救 ✗
-          if (uvCmd) await spawnTo(uvCmd, ['venv', '--seed', asrDir], { sink: appendAsr })
+          if (uvCmd) {
+    // ⭐ 2026-10-19（社区 PR #37 / issue #15）：uv 不给 --python 时拿"最新 CPython"，而 av / ctranslate2 / aiohttp
+    //    在 3.14+ 没有 wheel ⇒ 转写依赖直接 ResolutionImpossible ✗ ⇒ 先钉 3.12，失败再退回默认
+    const spec = String(process.env.BILI_DUTY_VENV_PYTHON || '3.12').trim()
+    let vc = await spawnTo(uvCmd, ['venv', '--seed', '--python', spec, asrDir], { sink: appendAsr })
+    if (vc !== 0) {
+      appendAsr(`\n（uv 带 --python ${spec} 没成 —— 退回 uv 默认 Python，能不能装上看运气）\n`)
+      vc = await spawnTo(uvCmd, ['venv', '--seed', asrDir], { sink: appendAsr })
+    }
+  }
           else await spawnTo(String(cfg.pythonPath || 'python'), ['-m', 'venv', asrDir], { sink: appendAsr })
         }
         if (!existsSync(py)) {
@@ -1352,7 +1365,15 @@ export function apply(ctx, config) {
         if (!existsSync(venvPy)) {
           // ⭐ 2026-10-17（issue #8③）：ASR 那个环境带了 --seed，主环境却漏了 ⇒ uv 建的 venv 默认不含 pip，
           //    一旦镜像失败、回退 `python -m pip` 就是 `No module named pip` ⇒ 连补救的路都没有 ✗
-          if (uvCmd) await spawnLogged(uvCmd, ['venv', '--seed', join(stateDir, '.venv')])
+          if (uvCmd) {
+    const spec = String(process.env.BILI_DUTY_VENV_PYTHON || '3.12').trim()
+    let code = await spawnLogged(uvCmd, ['venv', '--seed', '--python', spec, join(stateDir, '.venv')])
+    if (code !== 0) {
+      appendInstall(`\n（uv 带 --python ${spec} 没成 —— 退回 uv 默认 Python）\n`)
+      code = await spawnLogged(uvCmd, ['venv', '--seed', join(stateDir, '.venv')])
+    }
+    if (code !== 0) log('建 venv 没成功（两条路都试过）')
+  }
           if (!existsSync(venvPy) && !uvCmd) await spawnLogged(py, ['-m', 'venv', join(stateDir, '.venv')])
         }
         let code = 1
