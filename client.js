@@ -253,10 +253,11 @@ window.__ModuleLoader__.load({
         try {
           const r = await jget('/update')
           if (r && r.ok && r.latest) {
+            const from = r.source === 'github' ? '（npm 上还没发上去，这个版本来自 GitHub）' : ''
             if (r.hasNew) {
               setNewVer(r.latest)
-              say('有新版 v' + r.latest + '（你的是 v' + r.current + '）—— 点右边的「一键升级」，完了重启一次 dsh', 'warn')
-            } else say('已经是最新版 v' + r.current, 'good')
+              say('有新版 v' + r.latest + '（你的是 v' + r.current + '）' + from + ' —— 点右边的「一键升级」，完了重启一次 dsh', 'warn')
+            } else say('已经是最新版 v' + r.current + from, 'good')
           } else {
             say('查不到最新版（可能网络不通）—— 你现在的版本是 v' + ((r && r.current) || '?'))
           }

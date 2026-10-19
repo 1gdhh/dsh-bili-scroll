@@ -663,10 +663,13 @@ export function apply(ctx, config) {
   // ⭐ 一键升级：由宿主自己跑 `dsh plugin --profile web add dsh-bili-scroll`
   //    ⚠️ 装完必须重启 dsh 才生效；⚠️ Windows 上"替换正在运行的插件"可能被文件占用挡住（我们踩过）
   let upgrading = false
+  let lastUpdateSource = 'npm'   // 上一次「检查更新」是从哪儿查到新版的：npm / github（一键升级按它选装法）
+  let ghUpdateCache = null
   const runUpgrade = () => {
     if (upgrading) return { ok: true, busy: true, log: installLogFile, hint: '正在升级，别重复点' }
     upgrading = true
-    appendInstall('\n=== ' + new Date().toISOString() + ' 开始升级（add dsh-bili-scroll）===\n')
+    const spec = lastUpdateSource === 'github' ? 'github:c1overzz/dsh-bili-scroll' : 'dsh-bili-scroll'
+    appendInstall('\n=== ' + new Date().toISOString() + ' 开始升级（add ' + spec + '）===\n')
     ;(async () => {
       try {
         const dsh = resolveDsh()
@@ -680,7 +683,7 @@ export function apply(ctx, config) {
           return
         }
         let cmd = dsh.command || 'dsh'
-        let args = [...(dsh.args || []), 'plugin', '--profile', 'web', 'add', 'dsh-bili-scroll']
+        let args = [...(dsh.args || []), 'plugin', '--profile', 'web', 'add', spec]
         if (dsh.shell) { args = ['/c', cmd, ...args]; cmd = 'cmd.exe' }
         appendInstall('$ ' + cmd + ' ' + args.join(' ') + '\n')
         const code = await spawnTo(cmd, args, { sink: appendInstall })
@@ -1499,20 +1502,11 @@ export function apply(ctx, config) {
     if (req.method === 'POST' && path === '/api/bili-duty/upgrade') return sendJson(res, 200, runUpgrade())
 
     // 「检查更新」：⚠️ 只在用户点按钮时才联网（不偷偷发请求 ✓），结果缓存一天 ✓
+    // ⭐ 2026-10-19（主人："现在自动更新能让扫 github 吗"）：**两条源都问** ——
+    //    npm 上可能还没发上去（账号被暂停时会停在旧版），那时候 GitHub 才是最新 ✓
+    //    ⇒ 谁给的版本号更新就用谁，并记住来源：一键升级按来源选 `add dsh-bili-scroll` / `add github:…` ✓
     if (req.method === 'GET' && path === '/api/bili-duty/update') {
-      const out = { ok: true, current: myVersion(), latest: '', hasNew: false, page: 'https://www.npmjs.com/package/dsh-bili-scroll' }
-      try {
-        if (updateCache && Date.now() - updateCache.at < 24 * 3600 * 1000) out.latest = updateCache.latest
-        else {
-          const ctrl = new AbortController()
-          const timer = setTimeout(() => ctrl.abort(), 8000)
-          const r = await fetch('https://registry.npmjs.org/dsh-bili-scroll/latest', { signal: ctrl.signal })
-          clearTimeout(timer)
-          const j = await r.json()
-          out.latest = String(j.version || '')
-          updateCache = { at: Date.now(), latest: out.latest }
-        }
-      } catch (e) { out.ok = false; out.error = String(e?.message ?? e); return sendJson(res, 200, out) }
+      const out = { ok: true, current: myVersion(), latest: '', hasNew: false, source: 'npm', page: 'https://www.npmjs.com/package/dsh-bili-scroll' }
       // ⭐ 要比谁更新，不能只比不相等 —— 否则本地版本高于 npm 时会误报有新版
       const vnum = (v) => String(v || '').split('.').map((x) => parseInt(x, 10) || 0)
       const cmp = (a, b) => {
@@ -1520,7 +1514,42 @@ export function apply(ctx, config) {
         for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0) }
         return 0
       }
+      const fresh = (c) => Boolean(c) && Date.now() - c.at < 24 * 3600 * 1000
+      // ① npm（不依赖加速器，通常最快）
+      let npmVer = ''
+      try {
+        if (fresh(updateCache)) npmVer = updateCache.latest
+        else {
+          const r = await fetch('https://registry.npmjs.org/dsh-bili-scroll/latest', { signal: AbortSignal.timeout(8000) })
+          const j = await r.json()
+          npmVer = String(j.version || '')
+          updateCache = { at: Date.now(), latest: npmVer }
+        }
+      } catch (e) { log('查 npm 版本没成功（接着查 GitHub）：' + (e?.message ?? e)) }
+      // ② GitHub（要加速器；不通就安静跳过，别打扰用户）
+      let ghVer = ''
+      try {
+        if (fresh(ghUpdateCache)) ghVer = ghUpdateCache.latest
+        else {
+          const r = await fetch('https://api.github.com/repos/c1overzz/dsh-bili-scroll/contents/package.json', {
+            signal: AbortSignal.timeout(6000),
+            headers: { 'user-agent': 'dsh-bili-scroll', accept: 'application/vnd.github+json' },
+          })
+          if (r.ok) {
+            const j = await r.json()
+            const txt = Buffer.from(String(j.content || ''), 'base64').toString('utf8')
+            ghVer = String(JSON.parse(txt).version || '')
+            ghUpdateCache = { at: Date.now(), latest: ghVer }
+          }
+        }
+      } catch { /* 没有加速器时这里基本都失败 —— 静默，别打扰 */ }
+      // 谁新用谁；一样新时优先 npm（装起来快）
+      if (ghVer && (!npmVer || cmp(ghVer, npmVer) > 0)) { out.latest = ghVer; out.source = 'github' }
+      else out.latest = npmVer || ghVer
+      if (out.source === 'github') out.page = 'https://github.com/c1overzz/dsh-bili-scroll'
       out.hasNew = Boolean(out.latest) && cmp(out.latest, out.current) > 0
+      lastUpdateSource = out.source
+      if (!out.latest) { out.ok = false; out.error = '两条源都没查到版本号（网络可能不通）' }
       return sendJson(res, 200, out)
     }
 
