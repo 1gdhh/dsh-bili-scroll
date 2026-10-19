@@ -286,7 +286,10 @@ export function apply(ctx, config) {
     // ⭐ 读回来统一过一遍范围：原生设置页那边我们是钳不到写的（见 clampPatch 的注释）
     if (!row) return clampPatch(saved)
     const user = row.user || {}
-    const out = { ...hostCfg() }
+    // ⭐ 2026-10-19（另一位用户的 dsh 给出的更彻底的一招）：**别用闭包里那份 `config` 当宿主基准** ——
+    //    桌面版里它是挂载时的快照，之后写进 `cordis.patch.yml` 的值不会热刷新进来 ✗
+    //    ⇒ 用 `describe()` 这一行里的 `value`（当前 patch 解析出来的现值）当基准，拿不到才退回 `config` ✓
+    const out = normalize(row.value && typeof row.value === 'object' ? row.value : config, { ...DEFAULTS })
     // ⚠️ 2026-10-18（用户实证 + 他的 dsh 定位）：`pythonPath` 是**装依赖时自动写的**，
     //    但它一旦在 DSH 原生设置里有过值（默认 "python"），就会被宿主覆盖回来 ⇒
     //    「重装依赖」日志写着"已把 pythonPath 设为 venv"，实际生效的还是系统那个空壳 python
@@ -297,6 +300,11 @@ export function apply(ctx, config) {
       ...touchedKeys,            // 用户在我们面板里保存过的键（0.1.11 的判据）
       ...Object.keys(ov),
       'pythonPath',              // 插件自己算出来的路径
+      // ⭐ 2026-10-19（一位用户的 dsh 分析出来的）：桌面版 0.2.x 里，写进 cordis.patch.yml 的设置
+      //    不会热刷新到正在运行的实例 ⇒ 我们从 ctx 读到的那份 config 一直是挂载时的旧默认值
+      //    ⇒ 只要某个键"config.json 里的值和默认值不一样"，就说明有人显式设过它，必须以本地为准，
+      //    否则在桌面版上会被那份旧默认值压回（用户看到的就是"开关自己弹回去"）
+      ...Object.keys(DEFAULTS).filter((k) => JSON.stringify(saved[k]) !== JSON.stringify(DEFAULTS[k])),
     ])
     // ⭐ 2026-10-19：把"插件这份和 DSH 原生设置那份不一样、且以插件为准"的键记下来 ——
     //   只记不吵（每台机器每种组合只写一行日志），`/status` 里也能看到，排查时一眼够用
@@ -754,6 +762,22 @@ export function apply(ctx, config) {
     return ''
   }
 
+  // ⭐ 2026-10-19：以前找不到 dsh 就退到裸 `dsh` 硬跑 ⇒ 必然 spawn 失败、只留 exit 1 + 乱码。
+  //    现在先看 PATH 里到底有没有它：**没有就明确返回 missing**（调用方会停下来说清楚），
+  //    有才允许"最后一招"（有些人是手动配过 PATH 的 npm 全局）✓
+  const hasDshOnPath = () => {
+    const exts = process.platform === 'win32' ? ['', '.cmd', '.exe', '.bat', '.ps1'] : ['']
+    const dirs = String(process.env.PATH || '').split(process.platform === 'win32' ? ';' : ':')
+    for (const d of dirs) {
+      const dir = d.replace(/^"|"$/g, '').trim()
+      if (!dir) continue
+      for (const e of exts) {
+        try { if (existsSync(join(dir, 'dsh' + e))) return true } catch { /* 忽略坏路径 */ }
+      }
+    }
+    return false
+  }
+
   let autoDshLogged = ''
   // ⭐ 缓存：设置页每 5 秒拉一次 /status，不能让"找不到时的递归搜索"每 5 秒跑一遍
   let dshCliCache = { v: null, at: 0 }
@@ -780,7 +804,11 @@ export function apply(ctx, config) {
     // ⭐ 但也不能一味"判死"：有些人的 PATH 里确实有 dsh（例如手动配过 PATH 的 npm 全局）
     //    ⇒ 保留**最后一招**：用 PATH 里那个试一次（日志说明白），失败时报告里也会写清原因 ✓
     const hint = '已经把常见位置和应用目录都翻过一遍了。可以手动把「dsh 路径」填成 <应用目录>/…/@deepseek-ai/dsh/lib/bin.js，或改用 npm 装的 dsh'
-    log('⚠️ 没在常见位置找到 dsh，改试 PATH 里的 `dsh`（多半会在桌面版上失败）⇒ ' + hint)
+    if (!hasDshOnPath()) {
+      log('⚠️ 找不到 dsh（常见位置、应用目录、PATH 里都没有）⇒ ' + hint)
+      return { missing: true, hint }
+    }
+    log('⚠️ 没在常见位置找到 dsh，最后试一下 PATH 里的 `dsh` ⇒ ' + hint)
     return { command: 'dsh', args: [], shell: true, fallback: true, hint }
   }
 
