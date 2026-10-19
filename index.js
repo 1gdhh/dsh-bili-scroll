@@ -25,6 +25,7 @@ const defineTool = hostDeps.defineTool
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { McpClient } from './lib/mcp.mjs'
 import { verifyRecent, appendVerifyToReport } from './lib/verify.mjs'
@@ -110,6 +111,19 @@ export function apply(ctx, config) {
     return myVer
   }
   const stateDir = stateDirOf(ctx)
+  /**
+   * ⚠️ 2026-10-19（用户 `天文星球` 的截图）：装转写依赖时 uv 直接 exit 2 ——
+   *   `error: Could not acquire lock / failed to open file C:\Users\AP\AppData\Local\uv\cache\.lock: 拒绝访问 (os error 5)`
+   *   ⇒ **uv 默认把缓存放在 `%LOCALAPPDATA%\uv\cache`**，那地方一旦没权限（企业策略 / 杀软 / 别的用户建的）就彻底装不动 ✗
+   *   ⇒ 把 uv 的缓存 / 工具 / 解释器目录**全部钉在插件家里**（那儿一定可写）✓ ——
+   *   跟 `HF_HOME` 那次是同一类："环境差异由插件自己消掉，别让用户碰"。
+   */
+  const uvEnv = (extra = {}) => pyEnv({
+    UV_CACHE_DIR: join(stateDir, 'uv-cache'),
+    UV_TOOL_DIR: join(stateDir, 'uv-tools'),
+    UV_PYTHON_INSTALL_DIR: join(stateDir, 'uv-python'),
+    ...extra,
+  })
 
   // ⭐ "就绪"必须检查依赖真的装上了，不能只看目录存不存在
   //    （2026-10-15：只看目录，害一位真实用户"显示就绪但其实装失败"白折腾 ✗）
@@ -220,6 +234,22 @@ export function apply(ctx, config) {
 
   const hostCfg = () => normalize(config, { ...DEFAULTS })       // 宿主那份（schema 校验过、默认值已填）
   const savedCfg = () => normalize(readJson(cfgFile, {}), { ...DEFAULTS })
+  /**
+   * ⭐⭐ 0.1.11（2026-10-19 · 第三批用户报"开关还是回弹"之后改的）
+   *   0.1.9 / 0.1.10 一直想"跟宿主对账"：宿主那边有值就以宿主为准 —— 但 DSH 0.2.1 的某些启动方式下
+   *   `ctx.settings.update` 写不进去（`profile reload requires the root Include entry`），
+   *   于是用户在插件面板点的每一个开关，5 秒轮询后都被宿主旧值压回 ⇒ 表现成"开一个，另一个像被关掉"。
+   *   ⇒ 现在改成记一份"**用户在插件面板里存过的键**"（`config.json` 的 `_set`）：
+   *     · 存过 ⇒ **插件这份说了算**（宿主写不进去也不会被压回）
+   *     · 没存过、DSH 原生设置里有值 ⇒ 听宿主的（原生页仍是正当入口）
+   *     · 都没有 ⇒ 默认值
+   *   ⚠️ 老版本没记过 `_set` ⇒ 第一次跑时按"和默认值不一样"反推一遍，免得升级上来的老用户又被弹回。
+   */
+  let touchedKeys = (() => {
+    const raw = readJson(cfgFile, {})
+    if (Array.isArray(raw._set)) return new Set(raw._set)
+    return new Set(Object.keys(DEFAULTS).filter((k) => k in raw && JSON.stringify(raw[k]) !== JSON.stringify(DEFAULTS[k])))
+  })()
   const CFG_SIG = ['perDay', 'mentionName', 'replyToComments', 'overlayMcp']   // 靠这几个键认出"哪一行是我们"
   let settingsRow = { at: 0, row: null }
   /**
@@ -257,19 +287,40 @@ export function apply(ctx, config) {
     //    「重装依赖」日志写着"已把 pythonPath 设为 venv"，实际生效的还是系统那个空壳 python
     //    ⇒ 画二维码 import 不到 qrcode ⇒ **永远不出码** ✗
     //    ⇒ 这个键不让宿主对账（它由插件自己算出来，不该被界面上的旧值压住）
-    const HOST_WINS_EXCLUDED = new Set(['pythonPath'])
     const ov = readOverride()   // 本地刚存、宿主没同步成功的键 ⇒ 以本地为准
+    const touched = new Set([
+      ...touchedKeys,            // 用户在我们面板里保存过的键（0.1.11 的判据）
+      ...Object.keys(ov),
+      'pythonPath',              // 插件自己算出来的路径
+    ])
+    // ⭐ 2026-10-19：把"插件这份和 DSH 原生设置那份不一样、且以插件为准"的键记下来 ——
+    //   只记不吵（每台机器每种组合只写一行日志），`/status` 里也能看到，排查时一眼够用
+    const diff = []
     for (const k of Object.keys(DEFAULTS)) {
-      if (HOST_WINS_EXCLUDED.has(k)) { out[k] = saved[k]; continue }
-      if (ov[k] !== undefined) { out[k] = saved[k]; continue }
-      if (user[k] === undefined) out[k] = saved[k]
+      if (touched.has(k)) { out[k] = saved[k]; continue }        // 我们这边管 ⇒ 不再被宿主压回
+      if (user[k] !== undefined) { out[k] = user[k]; continue }  // 用户在 DSH 原生页改的 ⇒ 听他的
+      out[k] = saved[k]
+    }
+    for (const k of touched) {
+      if (k in DEFAULTS && user[k] !== undefined && JSON.stringify(user[k]) !== JSON.stringify(out[k])) diff.push(k)
+    }
+    hostDiff = diff
+    const sig = diff.slice().sort().join(',')
+    if (sig && sig !== lastDiffSig) {
+      lastDiffSig = sig
+      log(`这些键以插件面板为准（DSH 原生设置里那份不一样）：${sig}`)
     }
     return clampPatch(out)
   }
   const cfg = loadCfg()
   // ⭐ 配置是"随时可能被设置页就地改掉"的东西 ⇒ 每个入口用之前重算一遍（cfg 这个对象要一直指向同一份）
   const refreshCfg = () => { Object.assign(cfg, loadCfg()) }
-  const saveCfg = (patch) => { Object.assign(cfg, normalize(patch, cfg)); writeJson(cfgFile, cfg) }
+  const saveCfg = (patch) => {
+    Object.assign(cfg, normalize(patch, cfg))
+    // ⭐ 记下"这些键由插件面板说了算"（0.1.11：loadCfg 拿它决定谁赢）
+    for (const k of Object.keys(patch || {})) if (k in DEFAULTS) touchedKeys.add(k)
+    writeJson(cfgFile, { ...cfg, _set: [...touchedKeys] })
+  }
   /**
    * ⭐ 同时写一份到宿主：不写的话会出现死结 —— 某个键一旦在原生设置页设过就由宿主说了算，
    *    插件页再改那个键就成了"改了没反应" ✗。写失败不算致命（config.json 那份还在），把话带回给用户。
@@ -349,7 +400,7 @@ export function apply(ctx, config) {
       cwd: stateDir,                     // 凭证落在家里 ✓
       // ⭐ 这个内置的 Python MCP 会往 stdout 打中文（ensure_ascii=False）；
       //    Windows 默认 GBK 的话，中文/emoji 一进管道就可能炸 ⇒ 钉死 UTF-8
-      env: pyEnv(),
+      env: uvEnv(),
       log,
     })
     return mcp
@@ -483,6 +534,8 @@ export function apply(ctx, config) {
         ranToday: st.day === dayKey(now) ? Number(st.count || 0) : 0,
         pickedToday: countPickedToday(now),
         perDay: cfg.perDay,
+        // ⭐ 2026-10-19：这一轮会用哪个 dsh（空 = 没找到 ⇒ 那一轮根本跑不起来）
+        dshCli: dshCliCached(),
         windows: Object.fromEntries(Object.entries(WINDOWS).map(([k, w]) => [k, {
           label: w.label, start: w.start, end: w.end,
           switchOn: Boolean(cfg[k]),
@@ -619,6 +672,13 @@ export function apply(ctx, config) {
         const dsh = resolveDsh()
         // ⭐ 照抄那一轮的形状：resolveDsh 返回 { command, args, shell }
         //    （写错就退化成裸 'dsh'，而宿主 PATH 里常常没有它 ⇒ 静默失败）
+        // ⚠️ 2026-10-19：找不到 dsh 时不再硬跑，直接把要做的事说清楚
+        if (dsh.missing) {
+          appendInstall('=== 没法自动升级：找不到 dsh。' + dsh.hint + ' ===\n')
+          appendInstall('=== 也可以自己手动跑一次：dsh plugin --profile web add dsh-bili-scroll ===\n')
+          upgrading = false
+          return
+        }
         let cmd = dsh.command || 'dsh'
         let args = [...(dsh.args || []), 'plugin', '--profile', 'web', 'add', 'dsh-bili-scroll']
         if (dsh.shell) { args = ['/c', cmd, ...args]; cmd = 'cmd.exe' }
@@ -631,32 +691,89 @@ export function apply(ctx, config) {
     return { ok: true, started: true, log: installLogFile, hint: '正在升级 —— 完成后重启一次 dsh 才生效' }
   }
 
-  const resolveDsh = () => {
+  /**
+   * ⭐⭐ 2026-10-19（主人："改一下，让他的 dsh 直接弄好不行吗"）：**自己去把 dsh 找出来，别让用户手填**。
+   *   桌面版（Electron）不是 npm -g 装的、`dsh` 也不在 PATH 上 ⇒ 老逻辑只猜三个固定位置，猜不到就让用户填 `dshBin` ✗
+   *   ⇒ 现在从近到远挨个试，最后**在应用目录里做一次有界递归搜索**（只认 `dsh/lib/bin.js`，最多几千个目录就收手）。
+   */
+  const findDshCli = () => {
+    // ① 用户显式填的
     const explicit = String(cfg.dshBin || '').trim()
-    if (explicit && existsSync(explicit)) return { command: process.execPath, args: [explicit], shell: false }
-    // 常见的全局安装位置（Windows 的 npm 前缀 / POSIX 的 lib）
-    const guesses = [
+    if (explicit && existsSync(explicit)) return explicit
+    // ② 让 Node 的解析器替我们找（web profile / 桌面版 app 目录，两条路都可能命中）
+    try {
+      const req = createRequire(import.meta.url)
+      for (const spec of ['@deepseek-ai/dsh/lib/bin.js', '@deepseek-ai/dsh']) {
+        try { const p = req.resolve(spec); if (p && existsSync(p)) return p } catch { /* 换下一个 */ }
+      }
+    } catch { /* 解析器不可用就跳过 */ }
+    // ③ npm 全局 / POSIX 常见位置
+    for (const g of [
       join(process.env.APPDATA || '', 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+      join(process.env.ProgramFiles || '', 'nodejs', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
       '/usr/local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js',
       '/usr/lib/node_modules/@deepseek-ai/dsh/lib/bin.js',
-    ].filter(Boolean)
-    // ⭐ 2026-10-16（issue #5 / #6 / #7）：**桌面版是 Electron 安装包，不是 npm -g 装的** ⇒ 上面几条全找不到
-    //    ⇒ 老逻辑退到 `dsh`（PATH 里没有这个命令）⇒ 那一轮必败、而且只留下一句 exit 1 ✗
-    //    桌面版把 dsh 打在应用里 ⇒ 按 `process.resourcesPath` 猜几个位置（找到就用；找不到就**明说**）
-    if (process.resourcesPath) {
-      for (const rel of [
-        ['app.asar.unpacked', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'],
-        ['app', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'],
-        ['node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'],
-      ]) {
-        const p = join(process.resourcesPath, ...rel)
-        if (existsSync(p)) return { command: process.execPath, args: [p], shell: false }
-      }
+    ].filter(Boolean)) if (existsSync(g)) return g
+    // ④ 桌面版：在应用目录里有界搜一遍
+    const roots = []
+    if (process.resourcesPath) roots.push(process.resourcesPath)
+    try { roots.push(join(dirname(process.execPath), 'resources')) } catch { /* 没有就算了 */ }
+    const tried = []
+    for (const root of roots) {
+      if (!root || tried.includes(root) || !existsSync(root)) continue
+      tried.push(root)
+      const hit = scanForDsh(root, 0, { n: 0 })
+      if (hit) return hit
     }
-    for (const g of guesses) if (existsSync(g)) return { command: process.execPath, args: [g], shell: false }
+    return ''
+  }
+  // 有界递归：深度 ≤ 7、最多翻 4000 个目录（桌面版 resources 里目录不小，别再往上加了）
+  const scanForDsh = (dir, depth, budget) => {
+    if (depth > 7 || budget.n > 4000) return ''
+    let ents = []
+    try { ents = readdirSync(dir, { withFileTypes: true }) } catch { return '' }
+    for (const d of ents) {
+      if (!d.isDirectory()) continue
+      if (++budget.n > 4000) return ''
+      const p = join(dir, d.name)
+      if (d.name === 'dsh') {
+        const bin = join(p, 'lib', 'bin.js')
+        if (existsSync(bin)) return bin
+      }
+      const hit = scanForDsh(p, depth + 1, budget)
+      if (hit) return hit
+    }
+    return ''
+  }
+
+  let autoDshLogged = ''
+  // ⭐ 缓存：设置页每 5 秒拉一次 /status，不能让"找不到时的递归搜索"每 5 秒跑一遍
+  let dshCliCache = { v: null, at: 0 }
+  const dshCliCached = () => {
+    const now = Date.now()
+    if (dshCliCache.v !== null && now - dshCliCache.at < 60_000) return dshCliCache.v
+    const v = findDshCli()
+    dshCliCache = { v, at: now }
+    return v
+  }
+  const resolveDsh = () => {
+    const cli = dshCliCached()
+    if (cli) {
+      const explicit = String(cfg.dshBin || '').trim()
+      if (cli !== explicit && autoDshLogged !== cli) {
+        autoDshLogged = cli
+        log(`自动找到 dsh：${cli}（不用手填 dshBin 了）`)
+      }
+      return { command: process.execPath, args: [cli], shell: false }
+    }
     // ⚠️ 走到这儿就是真找不到 —— 一定要出声（静默失败比报错更坏）
-    log('⚠️ 找不到 dsh：桌面版多半不是 npm 全局安装的 ⇒ 请在设置里把「dsh 路径」指到 <应用目录>/…/@deepseek-ai/dsh/lib/bin.js，或改用 npm 装的 dsh')
-    return { command: 'dsh', args: [], shell: true }
+    // ⭐ 2026-10-19（一位桌面版用户的 duty.log）：以前这里**照样返回 `dsh`** ⇒ 那一轮必然 spawn 失败、
+    //    只留一句 exit 1 和 `'dsh' 不是内部或外部命令` 的乱码 ⇒ 用户完全不知道该怎么办 ✗
+    // ⭐ 但也不能一味"判死"：有些人的 PATH 里确实有 dsh（例如手动配过 PATH 的 npm 全局）
+    //    ⇒ 保留**最后一招**：用 PATH 里那个试一次（日志说明白），失败时报告里也会写清原因 ✓
+    const hint = '已经把常见位置和应用目录都翻过一遍了。可以手动把「dsh 路径」填成 <应用目录>/…/@deepseek-ai/dsh/lib/bin.js，或改用 npm 装的 dsh'
+    log('⚠️ 没在常见位置找到 dsh，改试 PATH 里的 `dsh`（多半会在桌面版上失败）⇒ ' + hint)
+    return { command: 'dsh', args: [], shell: true, fallback: true, hint }
   }
 
   const promptFor = () => {
@@ -822,7 +939,10 @@ export function apply(ctx, config) {
       log(`评论复核开始（${why}）`)
       const r = await verifyRecent(stateDir, { log })
       const f = appendVerifyToReport(stateDir, r.text)
-      log(`评论复核结束（${why}）：查了 ${r.checked.length} 条${f ? `，已写进 ${f}` : ''}`)
+      // ⭐ 2026-10-19：没有可核的记录时**别往 duty.log 里刷**（用户截图里看到同一句连了 4 行，
+      //    那是每轮 90 秒后自动核一次 + 手动点，读起来像在报错 ✗）⇒ 只在有活干的时候记日志 ✓
+      if (r.checked.length) log(`评论复核结束（${why}）：查了 ${r.checked.length} 条${f ? `，已写进 ${f}` : ''}`)
+      else log(`评论复核结束（${why}）：没有可核的记录（不算错）`)
       return { ok: true, why, checked: r.checked, skipped: r.skipped, text: r.text, report: f || '' }
     } catch (e) {
       log(`评论复核失败（${why}）：${e?.message ?? e}`)
@@ -863,6 +983,13 @@ export function apply(ctx, config) {
    try {
     refreshCfg()          // ⭐ 设置页刚改过的值要立刻生效（config 是就地改的，快照会过期）
     const dsh = resolveDsh()
+    // ⭐ 找不到 dsh 就别硬跑：以前会退化成裸 `dsh` ⇒ spawn 失败、只留 exit 1 + 一串乱码 ✗
+    if (dsh.missing) {
+      const msg = '这一轮没跑：找不到 dsh。' + dsh.hint
+      log(msg)
+      try { stubReportIfMissing(1) } catch { /* 补不上也不影响这句话已经进日志 */ }
+      return { started: false, why, error: msg }
+    }
     const overlay = ensureOverlay()
     const args = [...dsh.args, '--profile', cfg.headlessProfile || 'headless']
     if (overlay) args.push('--patch', overlay)
@@ -883,14 +1010,25 @@ export function apply(ctx, config) {
       //    中文 / emoji 打进管道会炸（用户反馈过 UnicodeDecodeError），一律按 UTF-8 来
       // ⭐ ELECTRON_RUN_AS_NODE：**桌面版（Electron）里 spawn 出去的 node 必须带这个**，
       //    否则它当成"再开一个 Electron 应用"、什么都不干就以 0 退出（issue #5：0.17 秒、code 0、什么都没做）
-      env: pyEnv({ BILI_DUTY_HOME: stateDir, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }),
+      env: uvEnv({ BILI_DUTY_HOME: stateDir, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }),
     })
     // ⚠️ 2026-10-16 issue #1（用户 `miaoxingyunduo` 贴了崩溃日志）：`duty.log` 被别的进程占着时
     //    (`EBUSY`) `appendFileSync` 会抛异常 —— 而这里是 **stream 的 data 回调**，没人接
     //    ⇒ **未捕获异常 ⇒ 整个 DSH 宿主被杀**（所有会话一起没）。跟 10-14 定时器那次是同一类 ✗
     //    ⇒ ⭐ 规矩：**插件里任何写日志/写文件的地方都包好 try/catch**，再错也只该"这一轮没跑成" ✓
+    // ⚠️ 2026-10-19 用户贴来的 duty.log 里有 `'dsh' 不是内部或外部命令` 的乱码 ✗ ——
+    //    cmd.exe 自己吐的错误信息是 **GBK**，我们按 UTF-8 写进日志就成了方块 ⇒ 用户看不懂
+    //    ⇒ 先按 UTF-8 解；出现替换符（\uFFFD）就回退 GBK ✓
+    const toText = (buf) => {
+      try {
+        const b = Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf))
+        const u = b.toString('utf8')
+        if (!u.includes('\uFFFD')) return u
+        try { return new TextDecoder('gbk').decode(b) } catch { return u }
+      } catch { return String(buf) }
+    }
     const pick = (buf) => {
-      try { appendFileSync(logFile, String(buf), 'utf8') } catch { /* 写不进去就丢，绝不能抛 */ }
+      try { appendFileSync(logFile, toText(buf), 'utf8') } catch { /* 写不进去就丢，绝不能抛 */ }
     }
     child.stdout?.on('data', pick)
     child.stderr?.on('data', pick)
@@ -1019,7 +1157,7 @@ export function apply(ctx, config) {
   const spawnLogged = (cmd, args) => new Promise((resolve) => {
     appendInstall(`\n$ ${cmd} ${args.join(' ')}\n`)
     let c
-    try { c = spawn(cmd, args, { cwd: stateDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: pyEnv() }) }
+    try { c = spawn(cmd, args, { cwd: stateDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: uvEnv() }) }
     catch (e) { appendInstall(`起不来：${e?.message ?? e}\n`); return resolve(1) }
     const w = (b) => appendInstall(String(b))
     c.stdout?.on('data', w)
@@ -1096,7 +1234,7 @@ export function apply(ctx, config) {
     let c
     try {
       c = spawn(cmd, args, { cwd: stateDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-        env: pyEnv(env || {}) })
+        env: uvEnv(env || {}) })
     } catch (e) { sink(`起不来：${e?.message ?? e}\n`); return resolve(1) }
     const w = (b) => sink(String(b))
     c.stdout?.on('data', w)
@@ -1122,7 +1260,13 @@ export function apply(ctx, config) {
           else await spawnTo(String(cfg.pythonPath || 'python'), ['-m', 'venv', asrDir], { sink: appendAsr })
         }
         if (!existsSync(py)) {
-          appendAsr('建环境失败 —— 先点上面的「装依赖」，把 uv 或 Python 准备好\n')
+          // ⭐ 2026-10-19（用户 `天文星球` 的截图）：uv 报 `Could not acquire lock … uv\cache\.lock 拒绝访问 (os error 5)`
+          //    以前这句话只会说"先点上面的装依赖" ✗ —— 用户根本不知道该动哪儿 ✓
+          //    ⇒ 现在把两条真实出路写出来（0.1.11 起 uv 缓存已经改到插件家，正常不会再撞）
+          appendAsr('建环境失败 —— 可能有两种原因：\n')
+          appendAsr('  ① 上面日志里出现 "Could not acquire lock / uv\\cache\\.lock / 拒绝访问" ⇒ 是 uv 缓存目录没权限；\n')
+          appendAsr('     装新版（0.1.11+）会把缓存改到插件自己的家目录，就不会再碰 %LOCALAPPDATA%\\uv 了。\n')
+          appendAsr('  ② 机器上没有可用的 uv 或 Python ⇒ 先点上面的「装依赖」，把主依赖装好再来。\n')
           log('转写：建环境失败'); return
         }
         appendAsr('装 faster-whisper + yt-dlp（走国内镜像）…\n')
@@ -1248,6 +1392,8 @@ export function apply(ctx, config) {
       // 2026-10-18：这几项"本地存了、但没能同步到 DSH 原生设置" ⇒ 设置页要告诉用户
       // （DSH 0.2.1 某些启动方式会拒写：profile reload requires the root Include entry）
       notSynced: Object.keys(readOverride()),
+      // ⭐ 2026-10-19：把"这一轮会用哪个 dsh"显示出来 —— 桌面版排查全靠它（空字符串 = 没找到）
+      dshCli: dshCliCached(),
       installFailed: !installing && !venvReadyNow() && (() => { try { return readFileSync(installLogFile, 'utf8').length > 0 } catch { return false } })(),
       installing,
       // ── 本地转写那一套的状态（设置页要显示进度）──
