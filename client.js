@@ -84,6 +84,12 @@ window.__ModuleLoader__.load({
 [data-bd-pre]{margin:6px 0 0;padding:8px 9px;border-radius:8px;max-height:170px;overflow:auto;font-size:11px;
   line-height:15px;white-space:pre-wrap;word-break:break-all;
   background:var(--dsw-alias-bg-overlay,rgba(0,0,0,.25));color:var(--dsw-alias-label-secondary,#c9ccd1);}
+    [data-bd-list]{margin:8px 0 0;max-height:420px;overflow:auto;display:flex;flex-direction:column;gap:6px;}
+    [data-bd-item]{padding:7px 9px;border-radius:8px;background:var(--dsw-alias-bg-l1,#15171c);border:1px solid var(--dsw-alias-separator,#262a33);}
+    [data-bd-item-t]{font-size:12px;line-height:17px;}
+    [data-bd-item-t] a{color:inherit;text-decoration:none;}
+    [data-bd-item-t] a:hover{text-decoration:underline;}
+    [data-bd-item-n]{margin-top:3px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#9aa0a6);}
 [data-bd-kv]{font-size:11px;line-height:18px;color:var(--dsw-alias-label-tertiary,#9aa0a6);word-break:break-all;}
 [data-bd-badge]{font-size:11px;padding:2px 7px;border-radius:6px;
   background:var(--dsw-alias-bg-overlay,rgba(128,128,128,.14));color:var(--dsw-alias-label-secondary,#c9ccd1);}
@@ -160,6 +166,8 @@ window.__ModuleLoader__.load({
       const [login, setLogin] = React.useState(null)
       const [runNote, setRunNote] = React.useState(null)
       const [report, setReport] = React.useState(null)        // 非 null = 报告已展开   // 顶部那行状态（跑一轮/装依赖的反馈原来在最底下，看不见）
+      const [watchedRows, setWatchedRows] = React.useState(null)   // null = 还没读；[] = 读到了但没记录
+      const [watchedPicked, setWatchedPicked] = React.useState(false) // 只看挑中的
       const [loginState, setLoginState] = React.useState('')
       const [loginTone, setLoginTone] = React.useState('')
       /* ⚠️ 扫码轮询的 timer 必须能停：切走设置页后还在跑的话会在已卸载的组件上 setState，
@@ -209,6 +217,19 @@ window.__ModuleLoader__.load({
           else say(what ? `${what}：已保存` : '已保存', 'good')
         } catch (e) { say(String(e?.message ?? e), 'warn') }
         finally { setBusy('') }
+      }
+
+      // 「它刷过的视频」：点开才读，读一次就留着（不会每 5 秒重拉）
+      const onShowWatched = async (pickedOnly) => {
+        const only = pickedOnly === undefined ? watchedPicked : Boolean(pickedOnly)
+        if (watchedRows !== null && only === watchedPicked) { setWatchedRows(null); return }  // 再点一次收起
+        setBusy('watched')
+        try {
+          const r = await jget('/watched?limit=80' + (only ? '&picked=1' : ''))
+          setWatchedRows(r && r.ok ? (r.rows || []) : [])
+          setWatchedPicked(only)
+          if (!r || r.ok === false) say('读不到记录：' + ((r && r.error) || '未知原因'), 'warn')
+        } catch (e) { say('读不到记录：' + String(e?.message ?? e), 'warn') } finally { setBusy('') }
       }
 
       const onShowReport = async () => {
@@ -566,6 +587,25 @@ window.__ModuleLoader__.load({
             msg ? h('div', { 'data-bd-msg': '', 'data-good': msgTone === 'good' ? '' : undefined, 'data-warn': msgTone === 'warn' ? '' : undefined }, msg) : null)),
 
         /* ── 环境与账号 ── */
+        /* ── 它刷过的视频 ── */
+        h('div', { 'data-bd-sec': '' },
+          h('div', { 'data-bd-h': '' }, '它刷过的视频'),
+          h('div', { 'data-bd-row': '' },
+            h('button', { 'data-bd-btn': '', disabled: busy === 'watched', onClick: () => onShowWatched(watchedPicked) },
+              watchedRows !== null ? '收起' : '看它刷过什么'),
+            h('button', { 'data-bd-btn': '', disabled: busy === 'watched' || watchedRows === null, onClick: () => onShowWatched(!watchedPicked) },
+              watchedPicked ? '看全部' : '只看挑中的'),
+            h('div', { 'data-bd-note': '' },
+              watchedRows === null ? '（点一下读出来；数据来自判重表 seen.md）'
+                : (watchedRows.length ? `共 ${watchedRows.length} 条（最多显示 80 条）` : '判重表里还没有记录 —— 跑一轮之后就有了'))),
+          watchedRows !== null && watchedRows.length ? h('div', { 'data-bd-list': '' },
+            watchedRows.map((x) => h('div', { key: x.day + x.bvid, 'data-bd-item': '' },
+              h('div', { 'data-bd-item-t': '' },
+                h('a', { href: x.url, target: '_blank', rel: 'noreferrer' }, x.title)),
+              h('div', { 'data-bd-item-n': '' },
+                `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', x.commented ? ' · 评论过' : ''))))
+            : null),
+
         h('div', { 'data-bd-sec': '' },
           h('div', { 'data-bd-h': '' }, '环境与账号'),
           h('div', { 'data-bd-row': '' },

@@ -1341,6 +1341,58 @@ export function apply(ctx, config) {
    * ⭐ 日志轮转（2026-10-16 量出来的：`duty.log` 三天就 797 KB、没有轮转 ⇒ 一年约 100 MB ✗）
    * 超过 2MB 就滚成 `duty.log.1`（只留一份），别让它在 C 盘上无声地长。
    */
+  /* ─────────────── 「它刷过的视频」：数据层 + 封面代理 ─────────────── */
+  /** seen.md 的表格一行一条：`| 日期 | bvid | 标题 | UP | 状态 |`（跳过的也记，理由写在状态里） */
+  const parseSeenTable = () => {
+    const file = join(stateDir, 'seen.md')
+    let text = ''
+    try { text = readFileSync(file, 'utf8') } catch { return [] }
+    const out = []
+    const seen = new Set()
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim()
+      if (!line.startsWith('|')) continue
+      const cells = line.split('|').map((s) => s.trim())
+      // 去掉首尾空段：["", 日期, bvid, 标题, UP, 状态, ""]
+      const c = cells.slice(1, cells.length - 1)
+      if (c.length < 5) continue
+      const [day, bvid, title, up, status] = c
+      if (!/^BV[0-9A-Za-z]{10}$/.test(bvid)) continue          // 表头 / 分隔线 / 别的表格都跳过
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue
+      const key = bvid + '@' + day
+      if (seen.has(key)) continue                              // 同一天重复记的只留第一条
+      seen.add(key)
+      const picked = status.includes('挑了')
+      const commented = status.includes('评论')
+      out.push({ day, bvid, title, up, status, picked, commented, url: 'https://www.bilibili.com/video/' + bvid })
+    }
+    out.sort((a, b) => (a.day === b.day ? (a.picked === b.picked ? 0 : a.picked ? -1 : 1) : (a.day < b.day ? 1 : -1)))
+    return out
+  }
+
+  /** 封面代理：浏览器不能直连 i0.hdslb.com（防盗链 403 + 等于把用户 IP 交出去）⇒ 宿主取回来再转发 */
+  const coverFor = async (bv) => {
+    if (!/^BV[0-9A-Za-z]{10}$/.test(bv)) return null
+    try {
+      const r = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + bv, {
+        signal: AbortSignal.timeout(8000),
+        headers: { 'user-agent': 'Mozilla/5.0', referer: 'https://www.bilibili.com/' },
+      })
+      if (!r.ok) return null
+      const j = await r.json()
+      const pic = String(j && j.data && j.data.pic || '')
+      if (!pic) return null
+      const img = await fetch(pic, {
+        signal: AbortSignal.timeout(10000),
+        headers: { 'user-agent': 'Mozilla/5.0', referer: 'https://www.bilibili.com/' },
+      })
+      if (!img.ok) return null
+      const buf = Buffer.from(await img.arrayBuffer())
+      const type = img.headers.get('content-type') || 'image/jpeg'
+      return { buf, type }
+    } catch (error) { log('取封面失败：' + String(error && error.message || error)); return null }
+  }
+
   const rotateLogIfBig = (limit = 2 * 1024 * 1024) => {
     try {
       if (!existsSync(logFile) || statSync(logFile).size < limit) return
@@ -1619,6 +1671,24 @@ export function apply(ctx, config) {
       }
       // 补收藏今天挑中的（设置页按钮）
       if (req.method === 'POST' && path === '/api/bili-duty/fav-today') return sendJson(res, 200, await favToday('manual'))
+
+      // 「它刷过的视频」：从 seen.md 读出来（数据按天倒序，跳过的也在，理由在 status 里）
+      if (req.method === 'GET' && path === '/api/bili-duty/watched') {
+        const all = parseSeenTable()
+        const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 60))
+        const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0)
+        const onlyPicked = url.searchParams.get('picked') === '1'
+        const rows = onlyPicked ? all.filter((x) => x.picked) : all
+        return sendJson(res, 200, { ok: true, total: rows.length, offset, limit, rows: rows.slice(offset, offset + limit) })
+      }
+      // 封面（宿主代理），浏览器只跟本机说话
+      if (req.method === 'GET' && path === '/api/bili-duty/cover') {
+        const got = await coverFor(String(url.searchParams.get('bv') || ''))
+        if (!got) { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }); res.end('no cover'); return }
+        res.writeHead(200, { 'content-type': got.type, 'cache-control': 'max-age=86400' })
+        res.end(got.buf)
+        return
+      }
 
     // ⭐ 「复核评论」：拿判重表里最近的记录，去 B站 核一遍到底公开可见没有
     //    （设置页那个按钮、以及每轮结束 90 秒后自动跑一次，都走这里）
