@@ -85,7 +85,11 @@ window.__ModuleLoader__.load({
   line-height:15px;white-space:pre-wrap;word-break:break-all;
   background:var(--dsw-alias-bg-overlay,rgba(0,0,0,.25));color:var(--dsw-alias-label-secondary,#c9ccd1);}
     [data-bd-list]{margin:8px 0 0;max-height:420px;overflow:auto;display:flex;flex-direction:column;gap:6px;}
-    [data-bd-item]{padding:7px 9px;border-radius:8px;background:var(--dsw-alias-bg-l1,#15171c);border:1px solid var(--dsw-alias-separator,#262a33);display:flex;gap:9px;align-items:flex-start;}
+    /* ⭐ 2026-10-21：标题看不见 ⇒ 颜色是"继承"来的，会话页里继承了深色底上的深色字。
+       改成显式取主题变量（浅色主题下这个变量是深色字，会自动适配） */
+    [data-bd-item]{padding:7px 9px;border-radius:8px;background:var(--dsw-alias-bg-l1,#15171c);border:1px solid var(--dsw-alias-separator,#262a33);display:flex;gap:9px;align-items:flex-start;color:var(--dsw-alias-label-primary,#e8eaed);}
+    [data-bd-item-t]{color:var(--dsw-alias-label-primary,#e8eaed);}
+    [data-bd-item-n]{color:var(--dsw-alias-label-tertiary,#9aa0a6);}
     [data-bd-cover]{width:86px;height:54px;object-fit:cover;border-radius:6px;background:#0d0f13;flex:0 0 auto;}
     [data-bd-item-body]{min-width:0;flex:1 1 auto;}
     [data-bd-item-t]{font-size:12px;line-height:17px;}
