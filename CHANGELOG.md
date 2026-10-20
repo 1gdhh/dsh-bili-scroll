@@ -1,3 +1,17 @@
+## 0.1.18 — 2026-10-20
+
+**采纳社区 PR 的两处修法（都自己实现了，没整包合）**
+
+- ⭐⭐ **overlay 补 `agent-default-model`**（来源：PR #50 / `Rookiexg`，DSH 0.2.1-rc.2 桌面版实测）：
+  之前 0.1.8 只是把 `credentials` / `authorization` / `deepseek-account` 三个服务放行，**还不够** ——
+  仍然会报 `MISSING_CREDENTIAL: llm-deepseek: no API key for provider route "deepseek-official"`，
+  因为 headless 的 `agent-default-model` 默认解析到 `deepseek-official`（要 API key），而"账号登录"的机器没有 key；
+  桌面版是靠 profile 那层 patch 把路由指到 `deepseek-account` 的，**我们这一轮的一次性 overlay 没有那一层**。
+  → 现在 overlay 里补 `agent-default-model`，**优先跟随用户当前选的模型**（`ctx.get('agentDefaultModel')`），拿不到就不写。
+- ⭐ **`lib/asr.py` 的 yt-dlp 加 `noprogress`**（来源：PR #23 / `383891598` 的审计）：
+  进度条默认打到 stdout ⇒ 调用方"stdout 非空 = 成功"恒真（实测前 1KB 全是 `[download] xx%`）⇒ 关掉进度，别污染输出。
+
+---
 ## 0.1.17 — 2026-10-20
 
 **修（两条社区 issue，都是真 bug）**
