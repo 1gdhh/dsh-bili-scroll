@@ -1674,11 +1674,16 @@ export function apply(ctx, config) {
     if (req.method === 'GET' && path === '/api/bili-duty/update') {
       const out = { ok: true, current: myVersion(), latest: '', hasNew: false, source: 'npm', page: 'https://www.npmjs.com/package/dsh-bili-scroll' }
       // ⭐ 要比谁更新，不能只比不相等 —— 否则本地版本高于 npm 时会误报有新版
-      const vnum = (v) => String(v || '').split('.').map((x) => parseInt(x, 10) || 0)
+      // ⭐ 2026-10-20：预发布标签要单独看 —— 以前只比三段数字 ⇒ `0.2.0-rc.1` 被当成 [0,2,0]，
+      //    跟正式版打平、却比 0.1.18 更大 ⇒ 用户会被提示"升级到 rc 版" ✗；现在数字段相同时**正式版 > 预发布版**
+      const vnum = (v) => String(v || '').trim().replace(/^v/i, '').split('-')[0].split('.').map((x) => parseInt(x, 10) || 0)
+      const isPre = (v) => /-/.test(String(v || '').trim())
       const cmp = (a, b) => {
         const x = vnum(a), y = vnum(b)
         for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0) }
-        return 0
+        const pa = isPre(a), pb = isPre(b)
+        if (pa === pb) return 0
+        return pa ? -1 : 1   // 有预发布标签的更旧
       }
       const fresh = (c) => Boolean(c) && Date.now() - c.at < 24 * 3600 * 1000
       // ① npm（不依赖加速器，通常最快）
