@@ -814,10 +814,14 @@ export function apply(ctx, config) {
 
   const promptFor = () => {
     // ⭐ 章程取哪一份：家里那份优先（ensureCharter 保证铺好；他改过的话就是他那份，升级的事由 ensureCharter 记账处理）
-    let duty = charterPath(pluginDir, stateDir)
-    // ⭐ 2026-10-17（issue #8④）：章程里的 `<家目录>` 这种占位符会被模型读成 `~`，实测**整轮转写白跑** ✗
-    //    ⇒ 在拼提示词这一步把**绝对路径**填进去，别让它猜（我们的老规矩：提示词一律给绝对路径）
-    try { duty = String(duty).split('<家目录>').join(stateDir) } catch { /* 替换失败就按原文用 */ }
+    const duty = charterPath(pluginDir, stateDir)
+    // ⭐ 2026-10-19（issue #36）：这里以前是**在路径字符串上**做 split('<家目录>') —— 空操作 ✗
+    //    章程内容还是让那一轮自己去读，里面 5 处占位符原样进了模型的眼睛（它读成 ~）。
+    //    现在改成：宿主读内容 → 把占位符换成真路径 → 内联进提示词（也省掉它一次读文件）✓
+    let charterText = ''
+    try {
+      charterText = readFileSync(duty, 'utf8').split('<家目录>').join(stateDir)
+    } catch { /* 读不到就退回"让它自己读路径"（下面提示词里会说） */ }
     const kws = Array.isArray(cfg.keywords) ? cfg.keywords.filter(Boolean) : []
     // ⭐ 开场先让它读**工作区**的 AGENTS.md —— 这一轮的工作目录就是使用者的工作区，
     //    AGENTS.md 本来就会自动注入；这里再点一句，保证它真按使用者的设定来（别人的设定同理）。
@@ -852,7 +856,10 @@ export function apply(ctx, config) {
       + (ownerDoc
         ? ''
         : '⭐ 这一轮**没有**拿到使用者的设定（他没填「工作区」，或那个目录里没有 `AGENTS.md`）⇒ **按中性说话**：别扮演任何人、也别自己编一套设定 ✓。')
-      + `然后读章程 ${duty}，按里面的要求刷一轮 B站，`
+      + (charterText
+          ? '下面是**值班章程**（里面的「<家目录>」已经替换成真实绝对路径了）—— 严格按它执行：\n\n'
+            + charterText + '\n\n按上面的章程刷一轮 B站，'
+          : `然后读章程 ${duty}，按里面的要求刷一轮 B站（章程里的 <家目录> 指的是 ${stateDir}），`)
       + (cfg.reportLevel === 'brief'
         ? `日报写成薄版：每条一两行（值不值得 + 链接）就够，别写长摘要。`
         : cfg.reportLevel === 'off'
@@ -1323,8 +1330,16 @@ export function apply(ctx, config) {
         // ⚠️ av 必须钉在 17 以下：faster-whisper 1.2.1 会调 av.open(metadata_errors=…)，
         //    而 av 17+ 不再接受这个参数 ⇒ 装了最新的 av 反而转不了（2026-10-14 在主人机器上实证）
         const AV_PIN = process.env.BILI_DUTY_AV_PIN || 'av>=12,<17'
-        if (uvCmd) code = await spawnTo(uvCmd, ['pip', 'install', '--python', py, '-i', mirror, 'faster-whisper', 'yt-dlp', AV_PIN], { sink: appendAsr })
-        if (code !== 0) code = await spawnTo(py, ['-m', 'pip', 'install', '-i', mirror, 'faster-whisper', 'yt-dlp', AV_PIN], { sink: appendAsr })
+        // ⭐ 2026-10-19（issue #27）：以前只走一个镜像，撞上清华 403 就整轮失败 ✗
+        //    改成跟主环境一样轮换三个镜像；每个镜像先 uv pip、失败再退回 python -m pip ✓
+        const mirrors = [mirror, 'https://mirrors.ustc.edu.cn/pypi/simple', 'https://mirrors.aliyun.com/pypi/simple']
+        const PKGS = ['faster-whisper', 'yt-dlp', AV_PIN]
+        for (const m of mirrors) {
+          if (code === 0) break
+          appendAsr(`\n—— 镜像：${m}\n`)
+          if (uvCmd) code = await spawnTo(uvCmd, ['pip', 'install', '--python', py, '-i', m, ...PKGS], { sink: appendAsr })
+          if (code !== 0) code = await spawnTo(py, ['-m', 'pip', 'install', '-i', m, ...PKGS], { sink: appendAsr })
+        }
         if (code !== 0) { appendAsr('装包失败 —— 看上面的报错\n'); log('转写：装包失败'); return }
         // ⭐ 顺手把模型也下好（不然第一次跑那一轮会卡在下载上 ✗）；模型走 HuggingFace 国内镜像
         const model = String(cfg.asrModel || 'small')
