@@ -86,6 +86,8 @@ export const Config = !z ? undefined : z.object({
   replyToComments: z.boolean().default(false).extra('volatile', true),
   /** 每轮最多回几条 */
   replyPerRound: z.number().default(1).extra('volatile', true),
+  /** 自动收藏：0 = 不收藏；>0 = 目标收藏夹 fid（设置页下拉选）。动作在宿主侧完成，模型拿不到这只手 */
+  favFolderId: z.number().default(0).extra('volatile', true),
 })
 
 /**
@@ -195,7 +197,7 @@ export function apply(ctx, config) {
   const DEFAULTS = {
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     dmMode: 'off', dmUid: 0,
-    keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '', reportLevel: 'full', replyToComments: false, replyPerRound: 1,
+    keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '', reportLevel: 'full', replyToComments: false, replyPerRound: 1, favFolderId: 0,
   }
   const normalize = (src, base) => {
     const out = { ...base }
@@ -228,6 +230,7 @@ export function apply(ctx, config) {
     if ('reportLevel' in p) p.reportLevel = ['full', 'brief', 'off'].includes(String(p.reportLevel)) ? String(p.reportLevel) : 'full'
     if ('replyToComments' in p) p.replyToComments = Boolean(p.replyToComments)
     if ('replyPerRound' in p) p.replyPerRound = Math.max(1, Math.min(Number(p.replyPerRound) || 1, 10))
+    if ('favFolderId' in p) p.favFolderId = Math.max(0, Math.floor(Number(p.favFolderId) || 0))
     if ('commentPerRound' in p) p.commentPerRound = Math.max(0, Math.min(Number(p.commentPerRound) || 0, 20))
     return p
   }
@@ -1103,6 +1106,10 @@ export function apply(ctx, config) {
     child.on('exit', (code) => {
       log(`刷B站结束（${why}，code=${code}）`)
       stubReportIfMissing(code)   // ⭐ 没写报告就补一份占位 —— 别让使用者什么都看不到
+    // ⭐ 2026-10-20：这一轮跑成了、并且使用者选了收藏夹 ⇒ 把挑中的存进去（后台做，别拖住收尾）
+    if (code === 0 && Number(cfg.favFolderId) > 0) {
+      favToday('auto').catch((error) => log('自动收藏出错（已兜住）：' + String(error?.message ?? error)))
+    }
       rotateLogIfBig()            // ⭐ 日志别无声地长（三天 797KB ⇒ 一年约 100MB）
       // ⭐ 这一轮挑了几条：从今天的报告里数（上一轮挑的还在同一份文件里 ⇒ 数出来就是全天的账）
       try {
@@ -1269,6 +1276,66 @@ export function apply(ctx, config) {
   //    （2026-10-16 主人要的"它看过什么"清单：报告是给人看的，归档是给检索用的 ✓）
   const digestDir = join(stateDir, 'digest')
   try { mkdirSync(digestDir, { recursive: true }) } catch { /* 建不了也别拦着插件加载 */ }
+
+  /* ─────────────── 自动收藏（宿主侧完成，模型拿不到这只手）─────────────── */
+  /**
+   * ⭐ 2026-10-20（思路来自社区 PR #63 / HebPRo，自己实现）：把这一轮挑中的视频存进使用者自己的收藏夹。
+   *   为什么放宿主而不给模型一只工具：① 收藏是"写动作"，给模型等于多一只可能被误用的手；
+   *   ② 挑中哪几条宿主自己就能从报告里数出来（行首的「### BV号」），不必再花 token 问模型。
+   */
+  const favOps = (args) => new Promise((resolve) => {
+    try {
+      const py = String(cfg.pythonPath || 'python')
+      const child = spawn(py, [join(stateDir, 'favops.py'), ...args], {
+        cwd: stateDir, env: pyEnv(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+      })
+      let outTxt = '', errTxt = ''
+      const timer = setTimeout(() => { try { child.kill() } catch { /* 已退出 */ } resolve({ ok: false, error: 'favops 超时（30 秒）' }) }, 30_000)
+      child.stdout?.on('data', (c) => { outTxt += c })
+      child.stderr?.on('data', (c) => { errTxt += c })
+      child.on('error', (error) => { clearTimeout(timer); resolve({ ok: false, error: String(error?.message ?? error) }) })
+      child.on('exit', () => {
+        clearTimeout(timer)
+        try { resolve(JSON.parse(String(outTxt).trim().split('\n').pop() || '{}')) } catch { resolve({ ok: false, error: (errTxt || outTxt || 'favops 没有输出').slice(-300) }) }
+      })
+    } catch (error) { resolve({ ok: false, error: String(error?.message ?? error) }) }
+  })
+
+  /** 从今天的报告里抠出"挑中的" BV 号（只认行首的 ### BV… 标题行；代码围栏里的不算） */
+  const pickIdsFromReport = (file) => {
+    try {
+      const fence = new RegExp('```[\s\S]*?```', 'g')
+      const text = readFileSync(file, 'utf8').replace(fence, '')
+      return [...new Set([...text.matchAll(/^#{2,3}[ \t]*(BV[0-9A-Za-z]{10})/gm)].map((m) => m[1]))]
+    } catch { return [] }
+  }
+
+  let favBusy = false
+  const favToday = async (why = 'manual') => {
+    if (favBusy) return { ok: false, error: '上一次收藏还没跑完，等它完事' }
+    favBusy = true
+    try {
+      refreshCfg()
+      const fid = Math.max(0, Math.floor(Number(cfg.favFolderId) || 0))
+      if (fid <= 0) return { ok: false, error: '还没选收藏夹（设置页「自动收藏到」选一个）' }
+      if (!hasCredential()) return { ok: false, error: '还没扫码登录 B站' }
+      const script = join(stateDir, 'favops.py')
+      if (!existsSync(script)) return { ok: false, error: 'favops.py 不在家里（重启一次 dsh 会自动铺好）' }
+      const report = join(outDir, `${dayKey()}.md`)
+      const ids = pickIdsFromReport(report)
+      if (!ids.length) return { ok: false, error: '今天的报告里没有挑中的视频（行首 ### BV号 那些）' }
+      const failures = []
+      let added = 0
+      for (const bv of ids) {
+        const r = await favOps(['add', bv, String(fid)])
+        if (r && r.ok) added++
+        else failures.push(bv + ': ' + ((r && r.error) || '未知原因'))
+      }
+      log(`自动收藏（${why}）：${added}/${ids.length} 条` + (failures.length ? '，失败 ' + failures.length : ''))
+      if (failures.length) log('  收藏失败明细：' + failures.slice(0, 5).join(' | '))
+      return { ok: true, added, total: ids.length, failures }
+    } finally { favBusy = false }
+  }
 
   /**
    * ⭐ 日志轮转（2026-10-16 量出来的：`duty.log` 三天就 797 KB、没有轮转 ⇒ 一年约 100 MB ✗）
@@ -1542,6 +1609,14 @@ export function apply(ctx, config) {
     // 装"本地转写"那套（独立环境：faster-whisper + yt-dlp + Whisper 模型）
     if (req.method === 'POST' && path === '/api/bili-duty/install-asr') {
       return sendJson(res, 200, runAsrInstall())
+      // 收藏夹列表（设置页下拉用）
+      if (req.method === 'GET' && path === '/api/bili-duty/fav-folders') {
+        const r = await favOps(['folders'])
+        return sendJson(res, 200, r && r.ok ? { ok: true, folders: r.folders || [] } : { ok: false, error: (r && r.error) || '读不到收藏夹' })
+      }
+      // 补收藏今天挑中的（设置页按钮）
+      if (req.method === 'POST' && path === '/api/bili-duty/fav-today') return sendJson(res, 200, await favToday('manual'))
+
     }
 
     // ⭐ 「复核评论」：拿判重表里最近的记录，去 B站 核一遍到底公开可见没有

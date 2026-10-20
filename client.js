@@ -121,6 +121,11 @@ window.__ModuleLoader__.load({
       //    用户会以为是开关坏了 ✗ ⇒ 数一下连续失败次数，交给界面把话说清楚（版本太旧 / 没重启 / 读不到）
       const [fails, setFails] = React.useState(0)
       React.useEffect(() => {
+        if (favFolders !== null) return
+        jget('/fav-folders').then((r) => { if (alive.current) setFavFolders(r && r.ok ? (r.folders || []) : []) })
+          .catch(() => { if (alive.current) setFavFolders([]) })
+      }, [favFolders])
+      React.useEffect(() => {
         let alive = true
         const tick = async () => {
           try {
@@ -144,6 +149,8 @@ window.__ModuleLoader__.load({
       const [msg, setMsg] = React.useState('')
       const [msgTone, setMsgTone] = React.useState('')
       const [kws, setKws] = React.useState(null)
+      const [favFolders, setFavFolders] = React.useState(null)   // 收藏夹列表（下拉用，null = 还没读）
+      const [favId, setFavId] = React.useState(null)             // 选中的收藏夹 fid（字符串）
       const [ws, setWs] = React.useState(null)
       const [rl, setRl] = React.useState(null)
       const [newVer, setNewVer] = React.useState('')       // 发现的新版本号（空 = 没发现）          // 日报形态：full / brief / off
@@ -180,6 +187,7 @@ window.__ModuleLoader__.load({
         if (cfg && mention === null) setMention(cfg.mentionName || '')
         if (cfg && dmUid === null) setDmUid(cfg.dmUid ? String(cfg.dmUid) : '')
         if (cfg && dmMode === null) setDmMode(cfg.dmMode || 'off')
+        if (cfg && favId === null) setFavId(String(cfg.favFolderId ?? 0))
       }, [cfg])
 
       const win = { ...DEFAULT_WINDOWS, ...(st?.windows || {}) }
@@ -344,6 +352,15 @@ window.__ModuleLoader__.load({
           loginTimer.current = timer
         } catch (e) { setLoginTone('warn'); setLoginState(String(e?.message ?? e)) }
         finally { setBusy('') }
+      }
+
+      const onFavToday = async () => {
+        setBusy('fav')
+        try {
+          const r = await jpost('/fav-today', {})
+          if (!r || r.ok === false) say('收藏没做成：' + ((r && r.error) || '未知原因'), 'warn')
+          else say(`收藏好了：${r.added}/${r.total} 条` + (r.failures && r.failures.length ? `（失败 ${r.failures.length} 条）` : ''), 'good')
+        } catch (e) { say(String(e?.message ?? e), 'warn') } finally { setBusy('') }
       }
 
       const onSaveText = async () => {
@@ -528,6 +545,20 @@ window.__ModuleLoader__.load({
             h('option', { value: 'full' }, '完整 —— 每条：标题 / UP / 为什么值得（默认）'),
             h('option', { value: 'brief' }, '薄 —— 每条一两行，只留值不值得 + 链接'),
             h('option', { value: 'off' }, '不写 —— 只发评论，不生成日报文件')),
+        h('div', { 'data-bd-label': '' }, '自动收藏到（这一轮挑中的视频存进你的收藏夹）'),
+        h('select', {
+          'data-bd-input': '', value: favId ?? '0',
+          onChange: (e) => { setFavId(e.target.value); patch({ favFolderId: Math.max(0, Number(e.target.value) || 0) }, '自动收藏') },
+        },
+          h('option', { value: '0' }, '不收藏（默认）'),
+          (favFolders || []).map((f) => h('option', { key: String(f.id), value: String(f.id) }, `${f.title}（${f.count} 条）`))),
+        h('div', { 'data-bd-row': '' },
+          h('button', { 'data-bd-btn': '', disabled: busy === 'fav', onClick: onFavToday }, '补收藏今天的'),
+          h('div', { 'data-bd-note': '' },
+            favFolders === null ? '收藏夹列表读取中…'
+              : (favFolders.length ? '每轮跑完会把挑中的视频存进上面选的收藏夹'
+                : '读不到收藏夹 —— 先「扫码登录」，或过会儿重开设置页'))),
+
           h('div', { 'data-bd-row': '' },
             h('button', { 'data-bd-btn': '', 'data-primary': '', disabled: Boolean(busy), onClick: onSaveText }, '保存'),
             msg ? h('div', { 'data-bd-msg': '', 'data-good': msgTone === 'good' ? '' : undefined, 'data-warn': msgTone === 'warn' ? '' : undefined }, msg) : null)),
