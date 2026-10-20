@@ -85,7 +85,9 @@ window.__ModuleLoader__.load({
   line-height:15px;white-space:pre-wrap;word-break:break-all;
   background:var(--dsw-alias-bg-overlay,rgba(0,0,0,.25));color:var(--dsw-alias-label-secondary,#c9ccd1);}
     [data-bd-list]{margin:8px 0 0;max-height:420px;overflow:auto;display:flex;flex-direction:column;gap:6px;}
-    [data-bd-item]{padding:7px 9px;border-radius:8px;background:var(--dsw-alias-bg-l1,#15171c);border:1px solid var(--dsw-alias-separator,#262a33);}
+    [data-bd-item]{padding:7px 9px;border-radius:8px;background:var(--dsw-alias-bg-l1,#15171c);border:1px solid var(--dsw-alias-separator,#262a33);display:flex;gap:9px;align-items:flex-start;}
+    [data-bd-cover]{width:86px;height:54px;object-fit:cover;border-radius:6px;background:#0d0f13;flex:0 0 auto;}
+    [data-bd-item-body]{min-width:0;flex:1 1 auto;}
     [data-bd-item-t]{font-size:12px;line-height:17px;}
     [data-bd-item-t] a{color:inherit;text-decoration:none;}
     [data-bd-item-t] a:hover{text-decoration:underline;}
@@ -599,11 +601,14 @@ window.__ModuleLoader__.load({
               watchedRows === null ? '（点一下读出来；数据来自判重表 seen.md）'
                 : (watchedRows.length ? `共 ${watchedRows.length} 条（最多显示 80 条）` : '判重表里还没有记录 —— 跑一轮之后就有了'))),
           watchedRows !== null && watchedRows.length ? h('div', { 'data-bd-list': '' },
-            watchedRows.map((x) => h('div', { key: x.day + x.bvid, 'data-bd-item': '' },
-              h('div', { 'data-bd-item-t': '' },
-                h('a', { href: x.url, target: '_blank', rel: 'noreferrer' }, x.title)),
-              h('div', { 'data-bd-item-n': '' },
-                `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', x.commented ? ' · 评论过' : ''))))
+            watchedRows.map((x, i) => h('div', { key: x.day + x.bvid, 'data-bd-item': '' },
+              // 封面走宿主代理（直连 i0.hdslb.com 会被防盗链挡，也等于把使用者 IP 交出去）
+              i < 40 ? h('img', { 'data-bd-cover': '', src: API + '/cover?bv=' + x.bvid, loading: 'lazy', alt: '' }) : null,
+              h('div', { 'data-bd-item-body': '' },
+                h('div', { 'data-bd-item-t': '' },
+                  h('a', { href: x.url, target: '_blank', rel: 'noreferrer' }, x.title)),
+                h('div', { 'data-bd-item-n': '' },
+                  `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', x.commented ? ' · 评论过' : '')))))
             : null),
 
         h('div', { 'data-bd-sec': '' },
