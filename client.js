@@ -146,6 +146,31 @@ window.__ModuleLoader__.load({
 
     /* ────────────── 设置页正文 ────────────── */
 
+/* ────────────── 会话头那个 tab：它刷过的视频（最小实验版）────────────── */
+function WatchTab() {
+  const [rows, setRows] = React.useState(null)
+  const [pickedOnly, setPickedOnly] = React.useState(false)
+  const load = (only) => {
+    setRows(null)
+    jget('/watched?limit=60' + (only ? '&picked=1' : ''))
+      .then((r) => setRows(r && r.ok ? (r.rows || []) : []))
+      .catch(() => setRows([]))
+  }
+  React.useEffect(() => { load(false) }, [])
+  return h('div', { 'data-bd-page': '' },
+    h('div', { 'data-bd-row': '' },
+      h('button', { 'data-bd-btn': '', onClick: () => { const n = !pickedOnly; setPickedOnly(n); load(n) } },
+        pickedOnly ? '看全部' : '只看挑中的'),
+      h('div', { 'data-bd-note': '' }, rows === null ? '读取中…' : `共 ${rows.length} 条`)),
+    rows && rows.length ? h('div', { 'data-bd-list': '' },
+      rows.map((x, i) => h('div', { key: x.day + x.bvid, 'data-bd-item': '' },
+        i < 30 ? h('img', { 'data-bd-cover': '', src: API + '/cover?bv=' + x.bvid, loading: 'lazy', alt: '' }) : null,
+        h('div', { 'data-bd-item-body': '' },
+          h('div', { 'data-bd-item-t': '' }, h('a', { href: x.url, target: '_blank', rel: 'noreferrer' }, x.title)),
+          h('div', { 'data-bd-item-n': '' }, `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', x.commented ? ' · 评论过' : '')))))
+      : h('div', { 'data-bd-note': '' }, '还没有记录 —— 跑一轮之后就有了'))
+}
+
     function Panel() {
       const [st, setSt, fails] = useStatus(5000)
       const [busy, setBusy] = React.useState('')
@@ -669,6 +694,17 @@ window.__ModuleLoader__.load({
           { name: 'settings.section', id: 'bili-scroll', order: 30, label: '刷B站' },
           () => h(Panel),
         ))
+
+  // ⭐ 2026-10-20 实验：会话头第三个 tab（0.2.1 里这个槽位真实存在；老版本没有就静默跳过）
+  try {
+    slots.inject('conversation.view', () => slots.register({
+      name: 'conversation.view',
+      id: 'bili-watched',
+      order: 20,
+      label: '刷过的视频',
+      scope: 'session',
+    }, () => h(WatchTab)))
+  } catch (e) { /* 没有这个槽位就算了 */ }
       },
     }
   },
