@@ -14,6 +14,12 @@
 
 - 版本比较把 **`-rc.x` 这类预发布算更旧**（以前只比三段数字 ⇒ `0.2.0-rc.1` 会被判成比 `0.2.0` 新，会误导用户升预发布版）。
 
+**自查修掉两处（都会真炸，已验）**
+
+- **收藏夹的 `useEffect` 插错了作用域**：它落进了 `useStatus()` 里，那个作用域没有 `favFolders`/`alive` ⇒ 一渲染就 `ReferenceError`，设置页会整片崩。已挪到 `Panel()` 里（`}, [cfg])` 之后）。
+- **两个新路由插进了 `/install-asr` 的 `if` 块里、在 `return` 之后** ⇒ 永远走不到（探针里报 `unknown GET /api/bili-duty/fav-folders`）。已挪到「复核评论」那段之前，跟其它路由并列。
+- 复验：`GET /fav-folders` 能走到逻辑（返回 `spawn EPERM` 是探针环境没有 python，属预期）、`POST /fav-today` 正确回「还没选收藏夹」、`/status` 正常；报告解析器从 10/19 的报告里正确抠出 5 个 BV。
+
 ---
 ## 0.1.18 — 2026-10-20
 

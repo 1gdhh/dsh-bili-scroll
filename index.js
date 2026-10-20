@@ -1609,6 +1609,9 @@ export function apply(ctx, config) {
     // 装"本地转写"那套（独立环境：faster-whisper + yt-dlp + Whisper 模型）
     if (req.method === 'POST' && path === '/api/bili-duty/install-asr') {
       return sendJson(res, 200, runAsrInstall())
+
+    }
+
       // 收藏夹列表（设置页下拉用）
       if (req.method === 'GET' && path === '/api/bili-duty/fav-folders') {
         const r = await favOps(['folders'])
@@ -1616,8 +1619,6 @@ export function apply(ctx, config) {
       }
       // 补收藏今天挑中的（设置页按钮）
       if (req.method === 'POST' && path === '/api/bili-duty/fav-today') return sendJson(res, 200, await favToday('manual'))
-
-    }
 
     // ⭐ 「复核评论」：拿判重表里最近的记录，去 B站 核一遍到底公开可见没有
     //    （设置页那个按钮、以及每轮结束 90 秒后自动跑一次，都走这里）

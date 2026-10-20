@@ -121,11 +121,6 @@ window.__ModuleLoader__.load({
       //    用户会以为是开关坏了 ✗ ⇒ 数一下连续失败次数，交给界面把话说清楚（版本太旧 / 没重启 / 读不到）
       const [fails, setFails] = React.useState(0)
       React.useEffect(() => {
-        if (favFolders !== null) return
-        jget('/fav-folders').then((r) => { if (alive.current) setFavFolders(r && r.ok ? (r.folders || []) : []) })
-          .catch(() => { if (alive.current) setFavFolders([]) })
-      }, [favFolders])
-      React.useEffect(() => {
         let alive = true
         const tick = async () => {
           try {
@@ -189,6 +184,13 @@ window.__ModuleLoader__.load({
         if (cfg && dmMode === null) setDmMode(cfg.dmMode || 'off')
         if (cfg && favId === null) setFavId(String(cfg.favFolderId ?? 0))
       }, [cfg])
+
+      // ⭐ 收藏夹列表：只读一次，读不到就空列表（别每 5 秒重拉）
+      React.useEffect(() => {
+        if (favFolders !== null) return
+        jget('/fav-folders').then((r) => { if (alive.current) setFavFolders(r && r.ok ? (r.folders || []) : []) })
+          .catch(() => { if (alive.current) setFavFolders([]) })
+      }, [favFolders])
 
       const win = { ...DEFAULT_WINDOWS, ...(st?.windows || {}) }
 
