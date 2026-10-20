@@ -1707,7 +1707,22 @@ export function apply(ctx, config) {
     // 「打开文件夹」：浏览器开不了本地目录 ⇒ 让宿主去开（只认 out / home 两个，别的不受理）
     if (req.method === 'POST' && path === '/api/bili-duty/open') {
       const body = await readBody(req)
-      const dir = String(body?.what || 'out') === 'home' ? stateDir : outDir
+      const what = String(body?.what || 'out')
+      // ⭐ 2026-10-21：**打开一个网页**（桌面版里 <a target=_blank> 不一定交给系统浏览器 ⇒ 改成让宿主 shell 打开）
+      if (what === 'url') {
+        const u = String(body?.u || '')
+        const onlyHttp = /^https?:\/\//i.test(u)
+        if (!onlyHttp) return sendJson(res, 200, { ok: false, error: '只接受 http(s) 链接' })
+        if (process.platform !== 'win32') {
+          const opener = process.platform === 'darwin' ? 'open' : 'xdg-open'
+          spawn(opener, [u], { detached: true, stdio: 'ignore' }).on('error', () => {})
+          return sendJson(res, 200, { ok: true })
+        }
+        spawn('cmd.exe', ['/c', 'start', '', u], { detached: true, stdio: 'ignore' }).on('error', () => {})
+        log('打开网页：' + u)
+        return sendJson(res, 200, { ok: true })
+      }
+      const dir = what === 'home' ? stateDir : outDir
       if (process.platform !== 'win32') return sendJson(res, 200, { ok: false, error: '这个按钮目前只做了 Windows' })
       // ⭐ 三种方式依次试（PATH 不全时 explorer.exe 会找不到 ✗；spawn 的失败是**异步**的，
       //    try/catch 抓不到 ⇒ 必须挂 'error' 监听，否则会升级成未捕获异常）

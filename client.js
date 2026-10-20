@@ -91,6 +91,13 @@ window.__ModuleLoader__.load({
     [data-bd-item-t]{font-size:12px;line-height:17px;}
     [data-bd-item-t] a{color:inherit;text-decoration:none;}
     [data-bd-item-t] a:hover{text-decoration:underline;}
+    [data-bd-clickable]{cursor:pointer;transition:background .12s;}
+    [data-bd-clickable]:hover{background:var(--dsw-alias-bg-l2,#1b1e25);}
+    [data-bd-item-t]{white-space:normal;word-break:break-word;}
+    /* 会话头那个 tab 里，列表要撑满可用高度、条目更松一点 */
+    [data-bd-page] [data-bd-list]{max-height:none;flex:1 1 auto;}
+    [data-bd-page] [data-bd-item]{padding:10px 12px;}
+    [data-bd-page] [data-bd-cover]{width:112px;height:63px;}
     [data-bd-item-n]{margin-top:3px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#9aa0a6);}
 [data-bd-kv]{font-size:11px;line-height:18px;color:var(--dsw-alias-label-tertiary,#9aa0a6);word-break:break-all;}
 [data-bd-badge]{font-size:11px;padding:2px 7px;border-radius:6px;
@@ -148,6 +155,7 @@ window.__ModuleLoader__.load({
 
 /* ────────────── 会话头那个 tab：它刷过的视频（最小实验版）────────────── */
 function WatchTab() {
+  const onOpenUrl = (u) => { jpost('/open', { what: 'url', u }).catch(() => {}) }
   const [rows, setRows] = React.useState(null)
   const [pickedOnly, setPickedOnly] = React.useState(false)
   const load = (only) => {
@@ -163,10 +171,10 @@ function WatchTab() {
         pickedOnly ? '看全部' : '只看挑中的'),
       h('div', { 'data-bd-note': '' }, rows === null ? '读取中…' : `共 ${rows.length} 条`)),
     rows && rows.length ? h('div', { 'data-bd-list': '' },
-      rows.map((x, i) => h('div', { key: x.day + x.bvid, 'data-bd-item': '' },
+      rows.map((x, i) => h('div', { key: x.day + x.bvid, 'data-bd-item': '', 'data-bd-clickable': '', title: '在浏览器打开', onClick: () => onOpenUrl(x.url) },
         i < 30 ? h('img', { 'data-bd-cover': '', src: API + '/cover?bv=' + x.bvid, loading: 'lazy', alt: '' }) : null,
         h('div', { 'data-bd-item-body': '' },
-          h('div', { 'data-bd-item-t': '' }, h('a', { href: x.url, target: '_blank', rel: 'noreferrer' }, x.title)),
+          h('div', { 'data-bd-item-t': '' }, x.title),
           h('div', { 'data-bd-item-n': '' }, `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', x.commented ? ' · 评论过' : '')))))
       : h('div', { 'data-bd-note': '' }, '还没有记录 —— 跑一轮之后就有了'))
 }
