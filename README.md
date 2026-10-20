@@ -47,9 +47,15 @@
 
 
 ```bash
-dsh plugin --profile web add dsh-bili-scroll      # 从 npm
-dsh plugin --profile web add github:c1overzz/dsh-bili-scroll   # 备选：直接从 GitHub
+# ⭐ 推荐这条（npm 那边账号被暂停，最新版一直在这里）
+dsh plugin --profile web add github:c1overzz/dsh-bili-scroll
+
+# npm 恢复之后可以改回这条（更快、不用加速器）
+dsh plugin --profile web add dsh-bili-scroll
 ```
+
+> **github 是目前的主通道。** npm 上的 `latest` 停在 0.1.7（账号被临时暂停，工单处理中），
+> 所以下面「装不上」那一节里凡是提到 npm 的地方，请一律按 github 那条理解。
 （⭐ 最省事的一条：把仓库链接贴给你自己的 dsh，说「**帮我装这个插件**」，它会自己装。）
 
 ⚠️ 装完**必须重启一次 dsh**（bundle 层要重启才组装）。然后进 **设置 → 刷B站**。
