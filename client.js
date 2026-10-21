@@ -53,7 +53,7 @@ window.__ModuleLoader__.load({
     [data-bd-page][data-bd-wide] [data-bd-list]{grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}
 [data-bd-sec]{display:flex;flex-direction:column;gap:8px;}
 [data-bd-h]{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--dsw-alias-label-tertiary,#9aa0a6);}
-[data-bd-row]{display:flex;align-items:center;gap:10px;}
+[data-bd-row]{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 [data-bd-grow]{flex:1;min-width:0;}
 [data-bd-label]{font-size:13px;}
 [data-bd-note]{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#9aa0a6);}
@@ -71,7 +71,7 @@ window.__ModuleLoader__.load({
   background:var(--dsw-alias-bg-layer-4,rgba(128,128,128,.12));color:inherit;font-family:inherit;}
 [data-bd-input]:focus{outline:none;border-color:#3b82f6;}
 [data-bd-num]{width:88px;text-align:center;}
-[data-bd-btn]{padding:7px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-family:inherit;
+[data-bd-btn]{padding:7px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;
   border:1px solid var(--dsw-alias-bg-layer-3,rgba(255,255,255,.16));
   background:var(--dsw-alias-bg-layer-4,rgba(128,128,128,.14));color:inherit;}
 [data-bd-btn]:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.24));}
@@ -113,7 +113,7 @@ window.__ModuleLoader__.load({
     [data-bd-tab]:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.1));}
     [data-bd-tab][aria-selected=true]{background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,inherit);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12);}
     [data-bd-away]{display:none !important;}
-    [data-bd-chip]{cursor:pointer;font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;
+    [data-bd-chip]{cursor:pointer;white-space:nowrap;font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;
       border:1px solid var(--dsw-alias-bg-layer-3,rgba(127,127,127,.22));background:transparent;
       color:var(--dsw-alias-label-secondary,inherit);}
     [data-bd-chip]:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.1));}
