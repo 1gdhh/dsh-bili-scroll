@@ -239,6 +239,7 @@ function WatchTab() {
       const [kws, setKws] = React.useState(null)
       const [favFolders, setFavFolders] = React.useState(null)   // 收藏夹列表（下拉用，null = 还没读）
       const [favId, setFavId] = React.useState(null)             // 选中的收藏夹 fid（字符串）
+      const [persona, setPersona] = React.useState(null)   // 人设提示词草稿
       const [ws, setWs] = React.useState(null)
       const [rl, setRl] = React.useState(null)
       const [newVer, setNewVer] = React.useState('')       // 发现的新版本号（空 = 没发现）          // 日报形态：full / brief / off
@@ -260,6 +261,8 @@ function WatchTab() {
     const [watchedOffset, setWatchedOffset] = React.useState(0)
     const [watchedTotal, setWatchedTotal] = React.useState(0)
     const [tab, setTab] = React.useState('daily')   // daily | taste | social | adv
+      const [diag, setDiag] = React.useState(null)      // 诊断信息文本
+      const [checks, setChecks] = React.useState(null)   // 环境自检结果 [{name, ok, detail, fix}]
       const [loginState, setLoginState] = React.useState('')
       const [loginTone, setLoginTone] = React.useState('')
       /* ⚠️ 扫码轮询的 timer 必须能停：切走设置页后还在跑的话会在已卸载的组件上 setState，
@@ -275,6 +278,7 @@ function WatchTab() {
       React.useEffect(() => {
         if (cfg && kws === null) setKws((cfg.keywords || []).join('\n'))
         if (cfg && ws === null) setWs(cfg.workspace || '')
+        if (cfg && persona === null) setPersona(cfg.personaPrompt || '')
         if (cfg && rl === null) setRl(cfg.reportLevel || 'full')
         if (cfg && perDay === null) setPerDay(String(cfg.perDay ?? 5))
         if (cfg && perRound === null) setPerRound(String(cfg.commentPerRound ?? 1))
@@ -355,6 +359,25 @@ function WatchTab() {
           else say(`复核完 ${n} 条：公开可见 ${vis} 条，其余「没查到」（可能还在审核 —— 看不到不等于没发出去）。结果也追加到今天的报告末尾了。`, vis ? 'good' : 'warn')
           if (r.report) setReport(null)
         } catch (e) { say(String(e?.message ?? e), 'warn') } finally { setBusy('') }
+      }
+
+      // ⭐ 把"要日志"变成"点一下"（2026-10-21）
+      const onDiagnose = async () => {
+        setBusy('diag')
+        try {
+          const r = await jget('/diagnose')
+          const text = String(r?.text || '（没拿到诊断信息）')
+          setDiag(text)
+          copyText(text).catch(() => {})
+          say('诊断信息已生成并复制到剪贴板', 'good')
+        } catch (e) { say('生成诊断信息失败：' + String(e?.message ?? e), 'warn') } finally { setBusy('') }
+      }
+      const onSelfCheck = async () => {
+        setBusy('selfcheck')
+        try {
+          const r = await jget('/selfcheck')
+          setChecks(Array.isArray(r?.items) ? r.items : [])
+        } catch (e) { say('自检失败：' + String(e?.message ?? e), 'warn') } finally { setBusy('') }
       }
 
       const copyText = async (text) => {
@@ -489,7 +512,7 @@ function WatchTab() {
 
       const onSaveText = async () => {
         const list = String(kws || '').split('\n').map((s) => s.trim()).filter(Boolean)
-        await patch({ keywords: list, workspace: String(ws || '').trim() }, '关键词与工作区')
+        await patch({ keywords: list, workspace: String(ws || '').trim(), personaPrompt: String(persona || '').trim() }, '关键词 / 人设 / 工作区')
       }
 
       if (!cfg) {
@@ -651,16 +674,17 @@ function WatchTab() {
             'data-bd-input': '', rows: 5, placeholder: '一行一个关键词；留空用内置那几组',
             value: kws ?? '', onChange: (e) => setKws(e.target.value),
           }),
-          h('div', { 'data-bd-label': '' }, '工作区（它按这里的 AGENTS.md 认设定）'),
-          h('input', {
-            'data-bd-input': '', value: ws ?? '',
-            placeholder: '填你自己的工作区路径（留空 = 不读人设，按中性说话）',
-            onChange: (e) => setWs(e.target.value),
+          h('div', { 'data-bd-label': '' }, '它按什么说话（人设提示词，可留空）'),
+          h('textarea', {
+            'data-bd-input': '', rows: 6,
+            placeholder: '想让它怎么说话就写在这儿 —— 比如「叫我某某，说话简短点，别用 emoji」。留空 = 按中性说话（不扮演任何人）。',
+            value: persona ?? '', onChange: (e) => setPersona(e.target.value),
           }),
-          h('div', { 'data-bd-note': '' },
-            '⭐ 想让它按你的设定说话，这里要填你自己平时用的那个工作区（放 AGENTS.md 的那个目录）；',
-            h('br'),
-            '留空不等于"用你的工作区" —— 那是不读设定、按中性说话（以前会去猜 dsh 进程自己的目录，容易读错人设）。'),
+          h('div', { 'data-bd-row': '' },
+            (st.personaFromWs && String(persona || '').trim() === '')
+              ? h('button', { 'data-bd-btn': '', onClick: () => setPersona(st.personaFromWs) }, '从工作区的 AGENTS.md 导入')
+              : null,
+            h('div', { 'data-bd-note': '' }, '改完点下面「保存」；下一轮就按这个说话。')),
           h('div', { 'data-bd-label': '' }, '日报写多细'),
           h('select', {
             'data-bd-input': '', value: rl ?? 'full',
@@ -719,6 +743,16 @@ function WatchTab() {
             h('button', { 'data-bd-btn': '', disabled: watchedOffset + WATCH_PAGE >= watchedTotal, onClick: () => onWatchPage(WATCH_PAGE) }, '下一页')) : null),
 
         h('div', { 'data-bd-sec': '', 'data-bd-group': 'adv', 'data-bd-away': tab === 'adv' ? undefined : '' },
+          h('div', { 'data-bd-row': '' },
+            h('button', { 'data-bd-btn': '', disabled: busy === 'diag', onClick: onDiagnose }, '复制诊断信息'),
+            h('button', { 'data-bd-btn': '', disabled: busy === 'selfcheck', onClick: onSelfCheck }, '环境自检'),
+            h('div', { 'data-bd-note': '' }, '出问题时先点这两个：第一个把环境+日志拼成一段（已自动复制），第二个逐项告诉你哪一步不通。')),
+          checks && checks.length ? h('div', { 'data-bd-list': '', 'data-bd-checks': '' },
+            checks.map((x) => h('div', { key: x.name, 'data-bd-item': '', 'data-bd-item-t': '' },
+              h('div', { 'data-bd-item-t': '' }, (x.ok ? '正常 · ' : '有问题 · ') + x.name),
+              h('div', { 'data-bd-item-n': '' }, x.detail || ''),
+              x.ok ? null : h('div', { 'data-bd-item-why': '' }, '怎么办：' + (x.fix || '把诊断信息发给作者'))))) : null,
+          diag ? h('pre', { 'data-bd-pre': '' }, diag) : null,
           h('div', { 'data-bd-h': '' }, '环境与账号'),
           h('div', { 'data-bd-row': '' },
             h('button', { 'data-bd-btn': '', disabled: busy === 'install', onClick: onInstall },
@@ -743,6 +777,13 @@ function WatchTab() {
 
         /* ── 它是怎么干活的（给他看的） ── */
         h('div', { 'data-bd-sec': '', 'data-bd-group': 'adv', 'data-bd-away': tab === 'adv' ? undefined : '' },
+          h('div', { 'data-bd-label': '' }, '工作区（高级：想让它按某个目录里的 AGENTS.md 认设定时才填）'),
+          h('input', {
+            'data-bd-input': '', value: ws ?? '',
+            placeholder: '填你自己的工作区路径；留空 = 不读那边的设定（推荐直接用人设提示词）',
+            onChange: (e) => setWs(e.target.value),
+          }),
+          h('div', { 'data-bd-note': '' }, '⭐ 上面「人设提示词」优先；这里只在人设留空时才生效。'),
           h('div', { 'data-bd-h': '' }, '它的地盘'),
           h('div', { 'data-bd-kv': '' },
             `家目录：${st.home}`,

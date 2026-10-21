@@ -80,6 +80,8 @@ export const Config = !z ? undefined : z.object({
   /** 给那一轮叠一份插件自己的 patch（把 B站 MCP 挂上）—— 用户 profile 一个字都不用改 */
   overlayMcp: z.boolean().default(true).extra('volatile', true),
   /** 跑 headless 时的工作目录 */
+  /** ⭐ 人设提示词：使用者想让它怎么说话（比"填工作区"对新手友好得多）· 留空 = 按中性说话 */
+  personaPrompt: z.string().default('').extra('volatile', true),
   workspace: z.string().default('').extra('volatile', true),
   /** 日报形态：full=完整（现状）· brief=每条一两行 · off=不写报告（只发评论） */
   reportLevel: z.string().default('full').extra('volatile', true),
@@ -223,6 +225,7 @@ function reportMeta() {
    *     ② **定时器回调里绝不让异常外冒**（见 tick）—— 未捕获异常会杀掉整个宿主进程。
    */
   const DEFAULTS = {
+    personaPrompt: '',
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     dmMode: 'only', dmUid: 0,
     keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '', reportLevel: 'full', replyToComments: false, replyPerRound: 1, favFolderId: 0,
@@ -590,6 +593,14 @@ function reportMeta() {
         dmMode: cfg.dmMode,
         dmUid: Number(cfg.dmUid) || 0,
         transcribe: cfg.transcribe,
+      // ⭐ 人设：老用户（只填过工作区）可以一键导入他那份 AGENTS.md
+      personaFromWs: (() => {
+        if (String(cfg.personaPrompt || '').trim()) return ''
+        const ws = String(cfg.workspace || '').trim()
+        if (!ws) return ''
+        const f = join(ws, 'AGENTS.md')
+        try { return existsSync(f) ? readFileSync(f, 'utf8').slice(0, 4000) : '' } catch { return '' }
+      })(),
         loggedIn: hasCredential(),
         home: stateDir,
         report: join(outDir, `${dayKey(now)}.md`),
@@ -879,8 +890,15 @@ function reportMeta() {
       //    也就是 **dsh 进程自己的工作目录** —— 那对多数人根本不是他的工作区 ✗
       //    ⇒ 读错人设、甚至把别的目录的设定读进来 ✓
       //    ⭐ 现在的规矩：**留空 = 不读设定**（宁可按中性说话，也别猜错 ✓）；要按人设就自己填工作区 ✓。
+    // ⭐ 2026-10-21：优先用「人设提示词」这个框（主人原话：工作区确实可以不要，有人不会用，改成直接填人设提示词确实更方便）
+    const persona = String(cfg.personaPrompt || '').trim()
+    if (persona) {
+      ownerDoc = '\n\n===== 使用者写的人设提示词（**按这个来**）=====\n'
+        + persona.slice(0, 6000)
+        + '\n===== 人设结束 =====\n'
+    }
       const wsDir = String(cfg.workspace || '').trim()
-      const agents = wsDir ? join(wsDir, 'AGENTS.md') : ''
+      const agents = (!persona && wsDir) ? join(wsDir, 'AGENTS.md') : ''
       if (agents && existsSync(agents)) {
         const text = readFileSync(agents, 'utf8')
         ownerDoc = '\n\n===== 使用者的 AGENTS.md（他写给自己 AI 的人设与准则，**按这个来**）=====\n'
@@ -1673,8 +1691,47 @@ function reportMeta() {
   const handle = async (req, res, url) => {
     refreshCfg()
     const path = url.pathname
-    if (req.method === 'GET' && path === '/api/bili-duty/status') return sendJson(res, 200, status())
+    // ⭐ 2026-10-21：每条视频一份笔记 —— **宿主拆报告**，不让模型多写一个字（零 token、不会写错）
+    const notesDir = join(stateDir, 'reports')
+    let notesSig = ''
+    function syncNotes() {
+      try {
+        const file = join(outDir, dayKey() + '.md')
+        if (!existsSync(file)) return 0
+        const mtime = statSync(file).mtimeMs
+        const sig = file + '@' + mtime
+        if (sig === notesSig) return 0
+        const text = readFileSync(file, 'utf8')
+        const blocks = text.split(/\n(?=###\s*BV)/).filter((b) => /^###\s*BV/.test(b.trim()))
+        if (!blocks.length) { notesSig = sig; return 0 }
+        mkdirSync(notesDir, { recursive: true })
+        let n = 0
+        for (const b of blocks) {
+          const m = /^###\s*(BV[0-9A-Za-z]+)/.exec(b.trim())
+          if (!m) continue
+          const bvid = m[1]
+          const title = (/\*\*标题\*\*\s*[：:]\s*(.+)/.exec(b) || [])[1] || bvid
+          const day = dayKey()
+          const out = join(notesDir, bvid + '-' + day + '.md')
+          if (existsSync(out)) continue
+          const head = '# ' + title + '\n\n'
+            + '> 来自「刷B站」' + day + ' 的那一轮 · ' + bvid
+            + ' · https://www.bilibili.com/video/' + bvid + '\n'
+            + '> 这一份是**单条笔记**（整天的日报在 ' + file + '）\n\n---\n\n'
+          writeFileSync(out, head + b.replace(/^###\s*BV[0-9A-Za-z]+/, '').trim() + '\n', 'utf8')
+          n++
+        }
+        notesSig = sig
+        if (n > 0) log('单条笔记：新写了 ' + n + ' 份到 ' + notesDir)
+        return n
+      } catch (e) { log('拆单条笔记失败：' + String(e?.message ?? e)); return 0 }
+    }
 
+
+    if (req.method === 'GET' && path === '/api/bili-duty/status') {
+      try { syncNotes() } catch (e) { /* 笔记失败不影响状态接口 */ }
+      return sendJson(res, 200, status())
+    }
     if (req.method === 'GET' && path === '/api/bili-duty/config') {
       return sendJson(res, 200, { ok: true, config: cfg, windows: WINDOWS, home: stateDir })
     }
@@ -1722,11 +1779,13 @@ function reportMeta() {
 
       // 「它刷过的视频」：从 seen.md 读出来（数据按天倒序，跳过的也在，理由在 status 里）
       if (req.method === 'GET' && path === '/api/bili-duty/watched') {
+          try { syncNotes() } catch (e) { /* 同上 */ }
         const all = parseSeenTable()
         const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 60))
         const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0)
         const meta = reportMeta()
-        const allRows = all.map((x) => { const m = meta.get(x.bvid) || {}; return { ...x, tier: m.tier || '', why: m.why || '' } })
+          const notes = (() => { try { return new Set(readdirSync(notesDir).map((f) => f.split('-')[0])) } catch { return new Set() } })()
+        const allRows = all.map((x) => { const m = meta.get(x.bvid) || {}; return { ...x, tier: m.tier || '', why: m.why || '', note: notes.has(x.bvid) } })
         const onlyPicked = url.searchParams.get('picked') === '1'
         const tier = String(url.searchParams.get('tier') || '')
         const state = String(url.searchParams.get('state') || '')   // picked | skipped | commented
@@ -1866,8 +1925,87 @@ function reportMeta() {
     }
 
     // 「测一下」：真跑一次，回答"能不能用"
+    // ⭐ 2026-10-21：把"要日志"变成"点一下" —— 诊断信息（纯文本，可整段复制）
+    function diagnoseText() {
+      const tail = (() => {
+        try { const p = join(stateDir, 'duty.log'); return existsSync(p) ? readFileSync(p, 'utf8').slice(-6000) : '（没有 duty.log）' }
+        catch (e) { return '（日志读不到：' + String(e?.message ?? e) + '）' }
+      })()
+      const free = (() => { try { const s = statSync ? null : null; return '' } catch { return '' } })()
+      const masked = (() => {
+        const c = { ...cfg }
+        for (const k of ['dmUid']) c[k] = c[k] ? '(已填)' : ''
+        return JSON.stringify(c, null, 2)
+      })()
+      return [
+        '=== 刷B站 诊断信息 ===',
+        '版本：' + myVersion(),
+        '平台：' + process.platform + ' ' + process.arch + ' · node ' + process.versions.node + (process.versions.electron ? ' · electron ' + process.versions.electron : ''),
+        'dsh：' + (() => { try { const d = resolveDsh(); return d.missing ? '没找到（' + d.hint + '）' : d.command + ' ' + d.args.join(' ') } catch (e) { return '探测失败：' + e?.message } })(),
+        'headless profile：' + (cfg.headlessProfile || 'headless'),
+        'pythonPath：' + cfg.pythonPath,
+        'venv 就绪：' + (venvReadyNow() ? '是' : '否') + (missingVenvDeps().length ? '（缺：' + missingVenvDeps().join(' / ') + '）' : ''),
+        '转写环境：' + (existsSync(join(stateDir, '.venv-asr')) ? '在' : '没装'),
+        'B站 登录：' + (hasCredential() ? '有凭证' : '没有凭证'),
+        '投递方式：' + (cfg.dmMode || 'off') + (Number(cfg.dmUid) > 0 ? '（UID 已填 ' + cfg.dmUid + '）' : '（UID 没填，会用昵称查）'),
+        '自动评论：' + (cfg.autoComment ? '开' : '关') + ' · 回复评论：' + (cfg.replyToComments ? '开' : '关'),
+        '家目录：' + stateDir,
+        '今天的报告：' + join(outDir, dayKey() + '.md'),
+        '',
+        '--- 配置（已脱敏）---',
+        masked,
+        '',
+        '--- duty.log 末尾 ---',
+        tail,
+      ].join('\n')
+    }
+
+    // ⭐ 环境自检：一条一条给结论 + 怎么办
+    async function selfCheck() {
+      const items = []
+      const put = (name, ok, detail, fix) => items.push({ name, ok, detail: detail || '', fix: ok ? '' : (fix || '') })
+      // ① dsh
+      try { const d = resolveDsh(); put('能找到 dsh（跑一轮要用）', !d.missing, d.missing ? '没找到：' + d.hint : (d.command + ' ' + (d.args || []).join(' ')), '在设置页「dsh 路径」里填上 …/@deepseek-ai/dsh/lib/bin.js') }
+      catch (e) { put('能找到 dsh（跑一轮要用）', false, String(e?.message ?? e), '同上') }
+      // ② Python
+      put('Python 主依赖装好了', venvReadyNow(), missingVenvDeps().length ? '缺：' + missingVenvDeps().join(' / ') : '就绪', '点「重装主依赖」，等它跑完再看这里')
+      // ③ 凭证
+      put('B站 已登录', hasCredential(), hasCredential() ? '家目录里有凭证文件' : '还没有凭证', '点「扫码登录」，手机确认时选「记住我 / 长期」')
+      // ④ 家目录可写
+      let writable = true
+      try { const t = join(stateDir, '.diag-write-test'); writeFileSync(t, 'x'); rmSync(t) } catch { writable = false }
+      put('家目录可写（报告要写在这儿）', writable, writable ? stateDir : '写不进去', '检查杀软是否拦了这个目录，或把家目录换到别的盘')
+      // ⑤ 能不能连上 B站
+      let reach = false
+      let reachDetail = ''
+      try {
+        const r = await fetch('https://api.bilibili.com/x/web-interface/nav', { headers: { 'User-Agent': 'Mozilla/5.0' } })
+        reach = r.ok
+        reachDetail = 'HTTP ' + r.status
+      } catch (e) { reachDetail = String(e?.message ?? e) }
+      put('能连上 B站', reach, reachDetail, '检查网络 / 加速器；公司或校园网可能拦了')
+      // ⑥ 私信对象
+      const dmOk = cfg.dmMode === 'off'
+        ? true
+        : (Number(cfg.dmUid) > 0 || String(cfg.mentionName || '').trim() !== '' || dmUidCache > 0)
+      put('知道私信发给谁（或没开私信）', dmOk,
+        cfg.dmMode === 'off' ? '当前是「只发评论」' : (Number(cfg.dmUid) > 0 ? 'UID ' + cfg.dmUid : (dmUidCache > 0 ? '按昵称查到 ' + dmUidCache : '还没查到')),
+        '填「私信发给谁（UID）」，或填「要 @ 谁」的昵称让它自己查')
+      return { ok: items.every((x) => x.ok), items }
+    }
+
     if (req.method === 'POST' && path === '/api/bili-duty/check') {
       return sendJson(res, 200, await checkUp())
+    }
+
+    // 「复制诊断信息」
+    if (req.method === 'GET' && path === '/api/bili-duty/diagnose') {
+      return sendJson(res, 200, { ok: true, text: diagnoseText() })
+    }
+
+    // 「环境自检」
+    if (req.method === 'GET' && path === '/api/bili-duty/selfcheck') {
+      return sendJson(res, 200, await selfCheck())
     }
 
     // ── 扫码登录（设置页用）──
