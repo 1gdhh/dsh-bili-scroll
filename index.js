@@ -86,7 +86,7 @@ export const Config = !z ? undefined : z.object({
   /** 私信监听：只认主人本人发来的私信，有新消息就回一句 · 2.0 起默认开（查私信不花 token，只有真有人发消息才回一句） */
   dmWatch: z.boolean().default(true).extra('volatile', true),
   /** 私信监听间隔（分钟，最小 3） */
-  dmWatchMinutes: z.natural().default(3).extra('volatile', true),
+  dmWatchMinutes: z.natural().default(1).extra('volatile', true),
   /** 私信回复每天最多几条（防刷） */
   dmReplyPerDay: z.natural().default(0).extra('volatile', true),
   /** 只回这个 UID（0 = 用「私信发给谁」那个） */
@@ -234,7 +234,7 @@ function reportMeta() {
    *     ② **定时器回调里绝不让异常外冒**（见 tick）—— 未捕获异常会杀掉整个宿主进程。
    */
   const DEFAULTS = {
-    dmWatch: true, dmWatchMinutes: 3, dmReplyPerDay: 0, dmOwnerUid: 0,
+    dmWatch: true, dmWatchMinutes: 1, dmReplyPerDay: 0, dmOwnerUid: 0,
     personaPrompt: '',
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     dmMode: 'only', dmUid: 0,
@@ -1318,7 +1318,7 @@ function reportMeta() {
   function startDmWatch() {
     try {
       if (dmTimer) { clearInterval(dmTimer); dmTimer = null }
-      const mins = Math.max(1, Number(cfg.dmWatchMinutes) || 3)
+      const mins = Math.max(1, Number(cfg.dmWatchMinutes) || 1)
       dmTimer = setInterval(() => { dmTick().catch((e) => log('私信定时器异常：' + String(e?.message ?? e))) }, mins * 60_000)
       if (dmTimer.unref) dmTimer.unref()
       log(`私信监听：${cfg.dmWatch ? '已开' : '关着'}（每 ${mins} 分钟查一次）`)

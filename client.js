@@ -249,7 +249,6 @@ function WatchTab() {
       const [perRound, setPerRound] = React.useState(null)
       const [replyPer, setReplyPer] = React.useState(null)
       const [dmUid, setDmUid] = React.useState(null)        // 私信收件人 UID（本地草稿）
-      const [dmWatch, setDmWatch] = React.useState(null)          // 私信监听开关
       const [dmWatchMin, setDmWatchMin] = React.useState(null)     // 每几分钟查一次
       const [dmMode, setDmMode] = React.useState(null)      // 投递方式：off / only / both
       const [mention, setMention] = React.useState(null)
@@ -288,7 +287,6 @@ function WatchTab() {
         if (cfg && mention === null) setMention(cfg.mentionName || '')
         if (cfg && dmUid === null) setDmUid(cfg.dmUid ? String(cfg.dmUid) : '')
         if (cfg && dmMode === null) setDmMode(cfg.dmMode || 'only')
-        if (cfg && dmWatch === null) setDmWatch(cfg.dmWatch !== false)   // 2.0 起默认开
         if (cfg && dmWatchMin === null) setDmWatchMin(String(cfg.dmWatchMinutes ?? 5))
         if (cfg && favId === null) setFavId(String(cfg.favFolderId ?? 0))
       }, [cfg])
@@ -644,24 +642,18 @@ function WatchTab() {
               }))) : null,
 
           h('div', { 'data-bd-sep': '' }),
-          h(ToggleRow, {
-            label: '私信双向（有人私信它就回一句）',
-            note: '默认开：它每几分钟纯代码查一次私信（不花 token），只有你发来新消息时才回一句；不想用就关掉，或者干脆不主动私信它。',
-            on: Boolean(dmWatch),
-            onChange: (v) => { setDmWatch(v); patch({ dmWatch: v }, '私信双向') },
-          }),
-          dmWatch ? h('div', { 'data-bd-sub': '' },
-            h('div', { 'data-bd-row': '' },
-              h('div', { 'data-bd-grow': '' },
-                h('div', { 'data-bd-label': '' }, '每几分钟查一次'),
-                h('div', { 'data-bd-note': '' }, '最小 1 分钟（越勤越容易被 B站 限流）；查的时候不花 token')),
-              h('input', {
-                'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 1, max: 120,
-                value: dmWatchMin ?? '',
-                onChange: (e) => setDmWatchMin(e.target.value),
-                onBlur: () => { const n = Math.max(1, Math.min(120, Number(dmWatchMin) || 3)); setDmWatchMin(String(n)); patch({ dmWatchMinutes: n }, '查私信间隔') },
-              })),
-              ) : null,
+          h('div', { 'data-bd-label': '' }, '私信双向（有人私信它就回一句）'),
+          h('div', { 'data-bd-note': '' }, '一直开着：只回你本人发来的私信（陌生人的一律不回），没填「发给谁」就不动。'),
+          h('div', { 'data-bd-row': '' },
+            h('div', { 'data-bd-grow': '' },
+              h('div', { 'data-bd-label': '' }, '每几分钟查一次'),
+              h('div', { 'data-bd-note': '' }, '默认 1 分钟；查的时候不花 token，真要限流也只是下一轮再试')),
+            h('input', {
+              'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 1, max: 120,
+              value: dmWatchMin ?? '',
+              onChange: (e) => setDmWatchMin(e.target.value),
+              onBlur: () => { const n = Math.max(1, Math.min(120, Number(dmWatchMin) || 1)); setDmWatchMin(String(n)); patch({ dmWatchMinutes: n }, '查私信间隔') },
+            })),
           h(ToggleRow, {
             label: '本地转写没字幕的视频',
             note: '默认关；开了以后，没字幕的视频会在本机转写一遍（不花 API 钱）',
