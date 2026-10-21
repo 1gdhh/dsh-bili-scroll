@@ -1282,6 +1282,23 @@ function reportMeta() {
     if (dmBusy) return
     dmBusy = true
     try {
+      // ⭐ 2026-10-21：同一台机器上可能有两个宿主（桌面版 + web 版）都装着这个插件，
+      //    两边都查私信 ⇒ 同一条消息可能被回两遍 ⇒ 用一个带 pid + 时间的锁，谁先跑谁干。
+      {
+        const lockFile = join(stateDir, 'dm-lock.json')
+        let lock = null
+        try { lock = JSON.parse(readFileSync(lockFile, 'utf8')) } catch { lock = null }
+        const alive = (pid) => {
+          if (!pid) return false
+          try { process.kill(pid, 0); return true } catch { return false }
+        }
+        const fresh = lock && Number(lock.ts) > Date.now() - 3 * 60_000
+        if (fresh && Number(lock.pid) !== process.pid && alive(Number(lock.pid))) {
+          log('私信监听：另一个宿主正在跑（pid=' + lock.pid + '）⇒ 这一跳让给它')
+          return
+        }
+        try { writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: Date.now() }), 'utf8') } catch { /* 写不了就算了 */ }
+      }
       if (!cfg.dmWatch) return
       const cred = dmCred(stateDir)
       if (!cred) return
