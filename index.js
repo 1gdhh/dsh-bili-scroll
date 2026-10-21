@@ -1605,7 +1605,8 @@ function reportMeta() {
       seen.add(key)
       const picked = status.includes('挑了')
       const commented = status.includes('评论')
-      out.push({ day, bvid, title, up, status, picked, commented, url: 'https://www.bilibili.com/video/' + bvid })
+    const delivered = /评论|私信|已发/.test(status)   // 2026-10-21：2.0 起默认私信投递 ⇒ 「发过」不再只等于「评论过」
+      out.push({ day, bvid, title, up, status, picked, commented, delivered, url: 'https://www.bilibili.com/video/' + bvid })
     }
     out.sort((a, b) => (a.day === b.day ? (a.picked === b.picked ? 0 : a.picked ? -1 : 1) : (a.day < b.day ? 1 : -1)))
     return out
@@ -1978,7 +1979,7 @@ function reportMeta() {
         if (tier) rows = rows.filter((x) => x.tier === tier)
         if (state === 'picked') rows = rows.filter((x) => x.picked)
         if (state === 'skipped') rows = rows.filter((x) => !x.picked)
-        if (state === 'commented') rows = rows.filter((x) => x.commented)
+    if (state === 'commented') rows = rows.filter((x) => x.delivered || x.commented)
         return sendJson(res, 200, { ok: true, total: rows.length, offset, limit, rows: rows.slice(offset, offset + limit) })
       }
       // 封面（宿主代理），浏览器只跟本机说话

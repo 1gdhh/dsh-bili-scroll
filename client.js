@@ -210,7 +210,7 @@ function WatchTab() {
       chip('全部', () => pick('state', ''), st === ''),
       chip('挑了', () => pick('state', 'picked'), st === 'picked'),
       chip('跳过', () => pick('state', 'skipped'), st === 'skipped'),
-      chip('评论过', () => pick('state', 'commented'), st === 'commented'),
+      chip('发给你了', () => pick('state', 'commented'), st === 'commented'),
       h('div', { 'data-bd-note': '' }, rows === null ? '读取中…' : `共 ${total} 条`)),
     h('div', { 'data-bd-row': '' },
       chip('值得看', () => pick('tier', '值得看'), tier === '值得看'),
@@ -221,7 +221,7 @@ function WatchTab() {
         i < 30 ? h('img', { 'data-bd-cover': '', src: API + '/cover?bv=' + x.bvid, loading: 'lazy', alt: '' }) : null,
         h('div', { 'data-bd-item-body': '' },
           h('div', { 'data-bd-item-t': '' }, x.title),
-          h('div', { 'data-bd-item-n': '' }, `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', x.commented ? ' · 评论过' : '',
+          h('div', { 'data-bd-item-n': '' }, `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', (x.delivered || x.commented) ? ' · 已发给你' : '',
             x.tier ? h('span', { 'data-bd-tier': x.tier }, ' · ' + x.tier) : null),
           x.why ? h('div', { 'data-bd-item-why': '' }, x.why) : null))))
       : h('div', { 'data-bd-note': '' }, rows === null ? '' : '这一类还没有记录 —— 跑一轮之后就有了'),
@@ -720,7 +720,7 @@ function WatchTab() {
               watchedRows === null ? '（点一下读出来；数据来自判重表 seen.md + 报告里的档位）'
                 : (watchedTotal ? `共 ${watchedTotal} 条` : '这一类还没有记录 —— 跑一轮之后就有了'))),
           watchedRows !== null ? h('div', { 'data-bd-row': '' },
-            [['', '全部'], ['picked', '挑了'], ['skipped', '跳过'], ['commented', '评论过']].map(([v, label]) =>
+            [['', '全部'], ['picked', '挑了'], ['skipped', '跳过'], ['commented', '发给你了']].map(([v, label]) =>
               h('button', { key: v || 'all', 'data-bd-chip': '', 'aria-selected': watchedState === v ? 'true' : 'false', onClick: () => onWatchPick('state', v) }, label)),
             ['值得看', '可以看', '不值当'].map((v) =>
               h('button', { key: v, 'data-bd-chip': '', 'aria-selected': watchedTier === v ? 'true' : 'false', onClick: () => onWatchPick('tier', v) }, v))) : null,
@@ -732,7 +732,7 @@ function WatchTab() {
                 h('div', { 'data-bd-item-t': '' },
                   h('a', { href: x.url, target: '_blank', rel: 'noreferrer' }, x.title)),
                 h('div', { 'data-bd-item-n': '' },
-                  `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', x.commented ? ' · 评论过' : '',
+                  `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', (x.delivered || x.commented) ? ' · 已发给你' : '',
                   x.tier ? h('span', { 'data-bd-tier': x.tier }, ' · ' + x.tier) : null),
                 x.why ? h('div', { 'data-bd-item-why': '' }, x.why) : null))))
             : null,
