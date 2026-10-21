@@ -62,30 +62,30 @@ window.__ModuleLoader__.load({
   transition:left .15s;display:block;}
 [data-bd-sw][data-on] i{left:19px;}
 [data-bd-sw][disabled]{opacity:.45;cursor:default;}
-[data-bd-sub]{margin-left:14px;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));
+[data-bd-sub]{margin-left:14px;padding-left:12px;border-left:2px solid var(--dsw-alias-bg-layer-3,rgba(255,255,255,.1));
   display:flex;flex-direction:column;gap:10px;}
 [data-bd-input]{width:100%;box-sizing:border-box;padding:7px 9px;border-radius:8px;font-size:12px;
-  border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));
-  background:var(--dsw-alias-bg-overlay,rgba(128,128,128,.12));color:inherit;font-family:inherit;}
+  border:1px solid var(--dsw-alias-bg-layer-3,rgba(255,255,255,.14));
+  background:var(--dsw-alias-bg-layer-4,rgba(128,128,128,.12));color:inherit;font-family:inherit;}
 [data-bd-input]:focus{outline:none;border-color:#3b82f6;}
 [data-bd-num]{width:88px;text-align:center;}
 [data-bd-btn]{padding:7px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-family:inherit;
-  border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.16));
-  background:var(--dsw-alias-bg-overlay,rgba(128,128,128,.14));color:inherit;}
+  border:1px solid var(--dsw-alias-bg-layer-3,rgba(255,255,255,.16));
+  background:var(--dsw-alias-bg-layer-4,rgba(128,128,128,.14));color:inherit;}
 [data-bd-btn]:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.24));}
 [data-bd-btn][data-primary]{background:#3b82f6;border-color:#3b82f6;color:#fff;}
 [data-bd-btn][disabled]{opacity:.5;cursor:default;}
 [data-bd-msg]{font-size:11px;line-height:16px;padding:7px 9px;border-radius:8px;word-break:break-all;
-  background:var(--dsw-alias-bg-overlay,rgba(128,128,128,.12));color:var(--dsw-alias-label-tertiary,#9aa0a6);}
+  background:var(--dsw-alias-bg-layer-4,rgba(128,128,128,.12));color:var(--dsw-alias-label-tertiary,#9aa0a6);}
 [data-bd-msg][data-warn]{color:#f59e0b;}
 [data-bd-msg][data-good]{color:#22c55e;}
 [data-bd-qr]{display:flex;gap:14px;align-items:flex-start;}
 [data-bd-qr] img{width:150px;height:150px;border-radius:8px;background:#fff;padding:6px;}
 [data-bd-pre]{margin:6px 0 0;padding:8px 9px;border-radius:8px;max-height:170px;overflow:auto;font-size:11px;
   line-height:15px;white-space:pre-wrap;word-break:break-all;
-  background:var(--dsw-alias-bg-overlay,rgba(0,0,0,.25));color:var(--dsw-alias-label-secondary,#c9ccd1);}
+  background:var(--dsw-alias-bg-layer-4,rgba(0,0,0,.25));color:var(--dsw-alias-label-secondary,#c9ccd1);}
     /* ⭐ 2026-10-21 重做：卡片网格 + 颜色全部取「真实存在」的主题变量
-       （之前用了 --dsw-alias-bg-l1 / --dsw-alias-separator —— 这两个在应用里根本不存在 ⇒
+       （之前用了 --dsw-alias-bg-layer-1 / --dsw-alias-bg-layer-3 —— 这两个在应用里根本不存在 ⇒
         fallback 落到硬编码深色，而文字用的 --dsw-alias-label-primary 是存在的 ⇒ 浅色主题下变近黑 ⇒ 黑底黑字看不见） */
     [data-bd-list]{margin:10px 0 0;max-height:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;}
     [data-bd-item]{display:flex;flex-direction:column;overflow:hidden;border-radius:12px;
@@ -119,7 +119,7 @@ window.__ModuleLoader__.load({
     [data-bd-tier='不值当']{color:var(--dsw-alias-label-tertiary,inherit);}
 [data-bd-kv]{font-size:11px;line-height:18px;color:var(--dsw-alias-label-tertiary,#9aa0a6);word-break:break-all;}
 [data-bd-badge]{font-size:11px;padding:2px 7px;border-radius:6px;
-  background:var(--dsw-alias-bg-overlay,rgba(128,128,128,.14));color:var(--dsw-alias-label-secondary,#c9ccd1);}
+  background:var(--dsw-alias-bg-layer-4,rgba(128,128,128,.14));color:var(--dsw-alias-label-secondary,#c9ccd1);}
 `
 
     // ⚠️ 与 lib/state.mjs 的 WINDOWS 保持一致（官方口径：工作日 9–12、14–18 是高峰，其余都是谷时）
