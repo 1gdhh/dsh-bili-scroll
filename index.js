@@ -173,6 +173,33 @@ export function apply(ctx, config) {
   }
   const logFile = join(stateDir, 'duty.log')
   const outDir = join(stateDir, 'out')
+
+/** out/*.md 里每条视频的「档位」和「为什么值得」—— 给「它刷过的视频」列表补信息用（2026-10-21） */
+function reportMeta() {
+  const map = new Map()
+  let files = []
+  try {
+    files = readdirSync(outDir).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).sort().reverse().slice(0, 60)
+  } catch { return map }
+  for (const f of files) {
+    let text = ""
+    try { text = readFileSync(join(outDir, f), "utf8") } catch { continue }
+    // 按 `### BVxxx` 切块
+    const blocks = text.split(/\n(?=###\s*BV)/)
+    for (const b of blocks) {
+      const m = b.match(/^###\s*(BV[0-9A-Za-z]+)/)
+      if (!m) continue
+      const bvid = m[1]
+      const tierM = b.match(/\*\*档位\*\*\s*[：:]\s*(值得看|可以看|不值当)/)
+      const whyM = b.match(/\*\*为什么值得\*\*\s*[：:]\s*([\s\S]*?)(?=\n\s*\*\*|$)/)
+      map.set(bvid, {
+        tier: tierM ? tierM[1] : "",
+        why: whyM ? whyM[1].replace(/\s+/g, " ").trim().slice(0, 160) : "",
+      })
+    }
+  }
+  return map
+}
   mkdirSync(outDir, { recursive: true })
 
   const log = (msg) => {
@@ -1677,8 +1704,16 @@ export function apply(ctx, config) {
         const all = parseSeenTable()
         const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 60))
         const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0)
+        const meta = reportMeta()
+        const allRows = all.map((x) => { const m = meta.get(x.bvid) || {}; return { ...x, tier: m.tier || '', why: m.why || '' } })
         const onlyPicked = url.searchParams.get('picked') === '1'
-        const rows = onlyPicked ? all.filter((x) => x.picked) : all
+        const tier = String(url.searchParams.get('tier') || '')
+        const state = String(url.searchParams.get('state') || '')   // picked | skipped | commented
+        let rows = onlyPicked ? allRows.filter((x) => x.picked) : allRows
+        if (tier) rows = rows.filter((x) => x.tier === tier)
+        if (state === 'picked') rows = rows.filter((x) => x.picked)
+        if (state === 'skipped') rows = rows.filter((x) => !x.picked)
+        if (state === 'commented') rows = rows.filter((x) => x.commented)
         return sendJson(res, 200, { ok: true, total: rows.length, offset, limit, rows: rows.slice(offset, offset + limit) })
       }
       // 封面（宿主代理），浏览器只跟本机说话

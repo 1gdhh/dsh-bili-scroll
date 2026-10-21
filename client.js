@@ -95,6 +95,13 @@ window.__ModuleLoader__.load({
     [data-bd-item-t]{font-size:12px;line-height:17px;}
     [data-bd-item-t] a{color:inherit;text-decoration:none;}
     [data-bd-item-t] a:hover{text-decoration:underline;}
+    [data-bd-chip]{cursor:pointer;font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--dsw-alias-separator,#2a2f3a);background:transparent;color:var(--dsw-alias-label-secondary,#9aa0a6);}
+    [data-bd-chip][aria-selected=true]{color:var(--dsw-alias-label-primary,#e8eaed);border-color:var(--dsw-alias-brand,#4c8dff);background:rgba(76,141,255,.14);}
+    [data-bd-tier]{font-weight:600;}
+    [data-bd-tier='值得看']{color:#3fb950;}
+    [data-bd-tier='可以看']{color:#d29922;}
+    [data-bd-tier='不值当']{color:#8b949e;}
+    [data-bd-item-why]{margin-top:3px;font-size:12px;line-height:17px;color:var(--dsw-alias-label-tertiary,#9aa0a6);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
     [data-bd-clickable]{cursor:pointer;transition:background .12s;}
     [data-bd-clickable]:hover{background:var(--dsw-alias-bg-l2,#1b1e25);}
     [data-bd-item-t]{white-space:normal;word-break:break-word;}
@@ -159,28 +166,55 @@ window.__ModuleLoader__.load({
 
 /* ────────────── 会话头那个 tab：它刷过的视频（最小实验版）────────────── */
 function WatchTab() {
+  const PAGE = 30
   const onOpenUrl = (u) => { jpost('/open', { what: 'url', u }).catch(() => {}) }
   const [rows, setRows] = React.useState(null)
-  const [pickedOnly, setPickedOnly] = React.useState(false)
-  const load = (only) => {
+  const [st, setSt] = React.useState('')      // '' | picked | skipped | commented
+  const [tier, setTier] = React.useState('')  // '' | 值得看 / 可以看 / 不值当
+  const [offset, setOffset] = React.useState(0)
+  const [total, setTotal] = React.useState(0)
+  const load = (s, t, off) => {
     setRows(null)
-    jget('/watched?limit=60' + (only ? '&picked=1' : ''))
-      .then((r) => setRows(r && r.ok ? (r.rows || []) : []))
-      .catch(() => setRows([]))
+    const q = `/watched?limit=${PAGE}&offset=${off}` + (s ? '&state=' + s : '') + (t ? '&tier=' + encodeURIComponent(t) : '')
+    jget(q).then((r) => {
+      if (!r || !r.ok) { setRows([]); return }
+      setRows(r.rows || [])
+      setTotal(Number(r.total) || 0)
+    }).catch(() => setRows([]))
   }
-  React.useEffect(() => { load(false) }, [])
+  React.useEffect(() => { load("", "", 0) }, [])
+  const pick = (kind, v) => {
+    const next = (kind === 'state' ? st : tier) === v ? '' : v
+    if (kind === 'state') setSt(next); else setTier(next)
+    setOffset(0)
+    load(kind === 'state' ? next : st, kind === 'tier' ? next : tier, 0)
+  }
+  const go = (d) => { const n = Math.max(0, Math.min(offset + d, Math.max(0, total - 1))); setOffset(n); load(st, tier, n) }
+  const chip = (label, on, active) => h('button', { 'data-bd-chip': '', 'aria-selected': active ? 'true' : 'false', onClick: on }, label)
   return h('div', { 'data-bd-page': '' },
     h('div', { 'data-bd-row': '' },
-      h('button', { 'data-bd-btn': '', onClick: () => { const n = !pickedOnly; setPickedOnly(n); load(n) } },
-        pickedOnly ? '看全部' : '只看挑中的'),
-      h('div', { 'data-bd-note': '' }, rows === null ? '读取中…' : `共 ${rows.length} 条`)),
+      chip('全部', () => pick('state', ''), st === ''),
+      chip('挑了', () => pick('state', 'picked'), st === 'picked'),
+      chip('跳过', () => pick('state', 'skipped'), st === 'skipped'),
+      chip('评论过', () => pick('state', 'commented'), st === 'commented'),
+      h('div', { 'data-bd-note': '' }, rows === null ? '读取中…' : `共 ${total} 条`)),
+    h('div', { 'data-bd-row': '' },
+      chip('值得看', () => pick('tier', '值得看'), tier === '值得看'),
+      chip('可以看', () => pick('tier', '可以看'), tier === '可以看'),
+      chip('不值当', () => pick('tier', '不值当'), tier === '不值当')),
     rows && rows.length ? h('div', { 'data-bd-list': '' },
       rows.map((x, i) => h('div', { key: x.day + x.bvid, 'data-bd-item': '', 'data-bd-clickable': '', title: '在浏览器打开', onClick: () => onOpenUrl(x.url) },
         i < 30 ? h('img', { 'data-bd-cover': '', src: API + '/cover?bv=' + x.bvid, loading: 'lazy', alt: '' }) : null,
         h('div', { 'data-bd-item-body': '' },
           h('div', { 'data-bd-item-t': '' }, x.title),
-          h('div', { 'data-bd-item-n': '' }, `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', x.commented ? ' · 评论过' : '')))))
-      : h('div', { 'data-bd-note': '' }, '还没有记录 —— 跑一轮之后就有了'))
+          h('div', { 'data-bd-item-n': '' }, `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', x.commented ? ' · 评论过' : '',
+            x.tier ? h('span', { 'data-bd-tier': x.tier }, ' · ' + x.tier) : null),
+          x.why ? h('div', { 'data-bd-item-why': '' }, x.why) : null))))
+      : h('div', { 'data-bd-note': '' }, rows === null ? '' : '这一类还没有记录 —— 跑一轮之后就有了'),
+    total > PAGE ? h('div', { 'data-bd-row': '' },
+      h('button', { 'data-bd-btn': '', disabled: offset <= 0, onClick: () => go(-PAGE) }, '上一页'),
+      h('div', { 'data-bd-note': '' }, `${offset + 1}–${Math.min(offset + PAGE, total)} / ${total}`),
+      h('button', { 'data-bd-btn': '', disabled: offset + PAGE >= total, onClick: () => go(PAGE) }, '下一页')) : null)
 }
 
     function Panel() {
@@ -207,6 +241,10 @@ function WatchTab() {
       const [report, setReport] = React.useState(null)        // 非 null = 报告已展开   // 顶部那行状态（跑一轮/装依赖的反馈原来在最底下，看不见）
       const [watchedRows, setWatchedRows] = React.useState(null)   // null = 还没读；[] = 读到了但没记录
       const [watchedPicked, setWatchedPicked] = React.useState(false) // 只看挑中的
+    const [watchedState, setWatchedState] = React.useState('')
+    const [watchedTier, setWatchedTier] = React.useState('')
+    const [watchedOffset, setWatchedOffset] = React.useState(0)
+    const [watchedTotal, setWatchedTotal] = React.useState(0)
       const [loginState, setLoginState] = React.useState('')
       const [loginTone, setLoginTone] = React.useState('')
       /* ⚠️ 扫码轮询的 timer 必须能停：切走设置页后还在跑的话会在已卸载的组件上 setState，
@@ -259,17 +297,26 @@ function WatchTab() {
       }
 
       // 「它刷过的视频」：点开才读，读一次就留着（不会每 5 秒重拉）
-      const onShowWatched = async (pickedOnly) => {
-        const only = pickedOnly === undefined ? watchedPicked : Boolean(pickedOnly)
-        if (watchedRows !== null && only === watchedPicked) { setWatchedRows(null); return }  // 再点一次收起
-        setBusy('watched')
-        try {
-          const r = await jget('/watched?limit=80' + (only ? '&picked=1' : ''))
-          setWatchedRows(r && r.ok ? (r.rows || []) : [])
-          setWatchedPicked(only)
-          if (!r || r.ok === false) say('读不到记录：' + ((r && r.error) || '未知原因'), 'warn')
-        } catch (e) { say('读不到记录：' + String(e?.message ?? e), 'warn') } finally { setBusy('') }
-      }
+    const WATCH_PAGE = 30
+    const onLoadWatched = async (st, tr, off) => {
+      setBusy('watched')
+      try {
+        const q = `/watched?limit=${WATCH_PAGE}&offset=${off}` + (st ? '&state=' + st : '') + (tr ? '&tier=' + encodeURIComponent(tr) : '')
+        const r = await jget(q)
+        setWatchedRows(r && r.ok ? (r.rows || []) : [])
+        setWatchedTotal(r && r.ok ? (Number(r.total) || 0) : 0)
+        setWatchedState(st)
+        setWatchedTier(tr)
+        setWatchedOffset(off)
+        if (!r || r.ok === false) say('读不到记录：' + ((r && r.error) || '未知原因'), 'warn')
+      } catch (e) { say('读不到记录：' + String(e?.message ?? e), 'warn') } finally { setBusy('') }
+    }
+    const onWatchPick = (kind, v) => {
+      const cur = kind === 'state' ? watchedState : watchedTier
+      const next = cur === v ? '' : v
+      return onLoadWatched(kind === 'state' ? next : watchedState, kind === 'tier' ? next : watchedTier, 0)
+    }
+    const onWatchPage = (d) => onLoadWatched(watchedState, watchedTier, Math.max(0, watchedOffset + d))
 
       const onShowReport = async () => {
         if (report !== null) { setReport(null); return }       // 再点一次收起
@@ -630,13 +677,16 @@ function WatchTab() {
         h('div', { 'data-bd-sec': '' },
           h('div', { 'data-bd-h': '' }, '它刷过的视频'),
           h('div', { 'data-bd-row': '' },
-            h('button', { 'data-bd-btn': '', disabled: busy === 'watched', onClick: () => onShowWatched(watchedPicked) },
+            h('button', { 'data-bd-btn': '', disabled: busy === 'watched', onClick: () => (watchedRows !== null ? setWatchedRows(null) : onLoadWatched(watchedState, watchedTier, watchedOffset)) },
               watchedRows !== null ? '收起' : '看它刷过什么'),
-            h('button', { 'data-bd-btn': '', disabled: busy === 'watched' || watchedRows === null, onClick: () => onShowWatched(!watchedPicked) },
-              watchedPicked ? '看全部' : '只看挑中的'),
             h('div', { 'data-bd-note': '' },
-              watchedRows === null ? '（点一下读出来；数据来自判重表 seen.md）'
-                : (watchedRows.length ? `共 ${watchedRows.length} 条（最多显示 80 条）` : '判重表里还没有记录 —— 跑一轮之后就有了'))),
+              watchedRows === null ? '（点一下读出来；数据来自判重表 seen.md + 报告里的档位）'
+                : (watchedTotal ? `共 ${watchedTotal} 条` : '这一类还没有记录 —— 跑一轮之后就有了'))),
+          watchedRows !== null ? h('div', { 'data-bd-row': '' },
+            [['', '全部'], ['picked', '挑了'], ['skipped', '跳过'], ['commented', '评论过']].map(([v, label]) =>
+              h('button', { key: v || 'all', 'data-bd-chip': '', 'aria-selected': watchedState === v ? 'true' : 'false', onClick: () => onWatchPick('state', v) }, label)),
+            ['值得看', '可以看', '不值当'].map((v) =>
+              h('button', { key: v, 'data-bd-chip': '', 'aria-selected': watchedTier === v ? 'true' : 'false', onClick: () => onWatchPick('tier', v) }, v))) : null,
           watchedRows !== null && watchedRows.length ? h('div', { 'data-bd-list': '' },
             watchedRows.map((x, i) => h('div', { key: x.day + x.bvid, 'data-bd-item': '' },
               // 封面走宿主代理（直连 i0.hdslb.com 会被防盗链挡，也等于把使用者 IP 交出去）
@@ -645,8 +695,14 @@ function WatchTab() {
                 h('div', { 'data-bd-item-t': '' },
                   h('a', { href: x.url, target: '_blank', rel: 'noreferrer' }, x.title)),
                 h('div', { 'data-bd-item-n': '' },
-                  `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', x.commented ? ' · 评论过' : '')))))
-            : null),
+                  `${x.day} · ${x.up} · `, x.picked ? '挑中了' : '跳过', x.commented ? ' · 评论过' : '',
+                  x.tier ? h('span', { 'data-bd-tier': x.tier }, ' · ' + x.tier) : null),
+                x.why ? h('div', { 'data-bd-item-why': '' }, x.why) : null))))
+            : null,
+          watchedRows !== null && watchedTotal > WATCH_PAGE ? h('div', { 'data-bd-row': '' },
+            h('button', { 'data-bd-btn': '', disabled: watchedOffset <= 0, onClick: () => onWatchPage(-WATCH_PAGE) }, '上一页'),
+            h('div', { 'data-bd-note': '' }, `${watchedOffset + 1}–${Math.min(watchedOffset + WATCH_PAGE, watchedTotal)} / ${watchedTotal}`),
+            h('button', { 'data-bd-btn': '', disabled: watchedOffset + WATCH_PAGE >= watchedTotal, onClick: () => onWatchPage(WATCH_PAGE) }, '下一页')) : null),
 
         h('div', { 'data-bd-sec': '' },
           h('div', { 'data-bd-h': '' }, '环境与账号'),
