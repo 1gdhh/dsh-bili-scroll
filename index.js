@@ -1344,7 +1344,15 @@ function reportMeta() {
       const mine = sess.filter((s) => s.uid === owner && s.unread > 0)
       // ⭐ 只回主人本人：别人（陌生人）发来的一律不回 —— 这里明确记一行，免得以为它在偷听
       const others = sess.filter((s) => s.uid !== owner && s.unread > 0)
-      if (others.length) log('私信监听：有 ' + others.length + ' 个陌生人的未读私信，按规矩不回（只回主人本人）')
+      // 陌生人未读：只报一次（同一批 key 不重复刷日志）
+      if (others.length) {
+        const sig = others.map((s) => s.uid + ':' + s.unread).sort().join(',')
+        const seenOther = readJsonFile(join(stateDir, 'dm-others.json'), { sig: '' })
+        if (seenOther.sig !== sig) {
+          log('私信监听：有 ' + others.length + ' 个陌生人的未读私信，按规矩不回（只回主人本人）')
+          writeJsonFile(join(stateDir, 'dm-others.json'), { sig })
+        }
+      }
       if (!mine.length) return
       const seen = readJsonFile(dmSeenFile, {})
       const quota = readJsonFile(dmQuotaFile, { day: '', n: 0 })
