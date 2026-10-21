@@ -108,6 +108,11 @@ window.__ModuleLoader__.load({
     [data-bd-clickable]{cursor:pointer;transition:border-color .12s,background .12s;}
     [data-bd-clickable]:hover{border-color:var(--dsw-alias-brand-primary,rgba(76,141,255,.5));
       background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.1));}
+    [data-bd-tabs]{display:flex;gap:4px;padding:4px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.08));}
+    [data-bd-tab]{flex:1;min-width:0;cursor:pointer;font:inherit;font-size:13px;padding:7px 10px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,inherit);}
+    [data-bd-tab]:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.1));}
+    [data-bd-tab][aria-selected=true]{background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,inherit);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12);}
+    [data-bd-away]{display:none !important;}
     [data-bd-chip]{cursor:pointer;font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;
       border:1px solid var(--dsw-alias-bg-layer-3,rgba(127,127,127,.22));background:transparent;
       color:var(--dsw-alias-label-secondary,inherit);}
@@ -254,6 +259,7 @@ function WatchTab() {
     const [watchedTier, setWatchedTier] = React.useState('')
     const [watchedOffset, setWatchedOffset] = React.useState(0)
     const [watchedTotal, setWatchedTotal] = React.useState(0)
+    const [tab, setTab] = React.useState('daily')   // daily | taste | social | adv
       const [loginState, setLoginState] = React.useState('')
       const [loginTone, setLoginTone] = React.useState('')
       /* ⚠️ 扫码轮询的 timer 必须能停：切走设置页后还在跑的话会在已卸载的组件上 setState，
@@ -521,7 +527,11 @@ function WatchTab() {
           : null,
 
         /* ── 定时 ── */
-        h('div', { 'data-bd-sec': '' },
+        h('div', { 'data-bd-tabs': '' },
+          [['daily', '日常'], ['taste', '偏好'], ['social', '互动'], ['adv', '高级']].map(([v, label]) =>
+            h('button', { key: v, 'data-bd-tab': '', 'aria-selected': tab === v ? 'true' : 'false', onClick: () => setTab(v) }, label))),
+
+        h('div', { 'data-bd-sec': '', 'data-bd-group': 'daily', 'data-bd-away': tab === 'daily' ? undefined : '' },
           h('div', { 'data-bd-h': '' }, '什么时候自己跑'),
           h(ToggleRow, {
             label: '峰谷时段自动刷',
@@ -539,7 +549,7 @@ function WatchTab() {
             }))) : null),
 
         /* ── 一轮挑几条 ── */
-        h('div', { 'data-bd-sec': '' },
+        h('div', { 'data-bd-sec': '', 'data-bd-group': 'daily', 'data-bd-away': tab === 'daily' ? undefined : '' },
           h('div', { 'data-bd-h': '' }, '一轮挑几条'),
           h('div', { 'data-bd-row': '' },
             h('div', { 'data-bd-grow': '' },
@@ -554,7 +564,7 @@ function WatchTab() {
           st.lastRunAt ? h('div', { 'data-bd-note': '' }, `上次跑：${new Date(st.lastRunAt).toLocaleString('zh-CN')}`) : null),
 
         /* ── 发言与转写 ── */
-        h('div', { 'data-bd-sec': '' },
+        h('div', { 'data-bd-sec': '', 'data-bd-group': 'social', 'data-bd-away': tab === 'social' ? undefined : '' },
           h('div', { 'data-bd-h': '' }, '它会不会替你说话'),
           h(ToggleRow, {
             label: '回复评论（只回楼中楼）',
@@ -639,7 +649,7 @@ function WatchTab() {
               h('pre', { 'data-bd-pre': '' }, st.asrTail)) : null) : null),
 
         /* ── 关注什么 / 在哪儿刷 ── */
-        h('div', { 'data-bd-sec': '' },
+        h('div', { 'data-bd-sec': '', 'data-bd-group': 'taste', 'data-bd-away': tab === 'taste' ? undefined : '' },
           h('div', { 'data-bd-h': '' }, '关注什么'),
           h('textarea', {
             'data-bd-input': '', rows: 5, placeholder: '一行一个关键词；留空用内置那几组',
@@ -678,14 +688,6 @@ function WatchTab() {
                 : '读不到收藏夹 —— 先「扫码登录」，或过会儿重开设置页'))),
 
           h('div', { 'data-bd-row': '' },
-            h('button', { 'data-bd-btn': '', 'data-primary': '', disabled: Boolean(busy), onClick: onSaveText }, '保存'),
-            msg ? h('div', { 'data-bd-msg': '', 'data-good': msgTone === 'good' ? '' : undefined, 'data-warn': msgTone === 'warn' ? '' : undefined }, msg) : null)),
-
-        /* ── 环境与账号 ── */
-        /* ── 它刷过的视频 ── */
-        h('div', { 'data-bd-sec': '' },
-          h('div', { 'data-bd-h': '' }, '它刷过的视频'),
-          h('div', { 'data-bd-row': '' },
             h('button', { 'data-bd-btn': '', disabled: busy === 'watched', onClick: () => (watchedRows !== null ? setWatchedRows(null) : onLoadWatched(watchedState, watchedTier, watchedOffset)) },
               watchedRows !== null ? '收起' : '看它刷过什么'),
             h('div', { 'data-bd-note': '' },
@@ -713,7 +715,7 @@ function WatchTab() {
             h('div', { 'data-bd-note': '' }, `${watchedOffset + 1}–${Math.min(watchedOffset + WATCH_PAGE, watchedTotal)} / ${watchedTotal}`),
             h('button', { 'data-bd-btn': '', disabled: watchedOffset + WATCH_PAGE >= watchedTotal, onClick: () => onWatchPage(WATCH_PAGE) }, '下一页')) : null),
 
-        h('div', { 'data-bd-sec': '' },
+        h('div', { 'data-bd-sec': '', 'data-bd-group': 'adv', 'data-bd-away': tab === 'adv' ? undefined : '' },
           h('div', { 'data-bd-h': '' }, '环境与账号'),
           h('div', { 'data-bd-row': '' },
             h('button', { 'data-bd-btn': '', disabled: busy === 'install', onClick: onInstall },
@@ -737,7 +739,7 @@ function WatchTab() {
               '确认时选「记住我 / 长期」那张 —— 选 24 小时的话，明天就得重扫。')) : null),
 
         /* ── 它是怎么干活的（给他看的） ── */
-        h('div', { 'data-bd-sec': '' },
+        h('div', { 'data-bd-sec': '', 'data-bd-group': 'adv', 'data-bd-away': tab === 'adv' ? undefined : '' },
           h('div', { 'data-bd-h': '' }, '它的地盘'),
           h('div', { 'data-bd-kv': '' },
             `家目录：${st.home}`,
@@ -752,6 +754,15 @@ function WatchTab() {
               '复核评论'),
             h('button', { 'data-bd-btn': '', onClick: () => copyText(st.report) }, '复制报告路径')),
           report !== null ? h('pre', { 'data-bd-pre': '' }, report) : null),
+          h('div', { 'data-bd-row': '' },
+            h('button', { 'data-bd-btn': '', 'data-primary': '', disabled: Boolean(busy), onClick: onSaveText }, '保存'),
+            msg ? h('div', { 'data-bd-msg': '', 'data-good': msgTone === 'good' ? '' : undefined, 'data-warn': msgTone === 'warn' ? '' : undefined }, msg) : null)),
+
+        /* ── 环境与账号 ── */
+        /* ── 它刷过的视频 ── */
+        h('div', { 'data-bd-sec': '', 'data-bd-group': 'daily', 'data-bd-away': tab === 'daily' ? undefined : '' },
+          h('div', { 'data-bd-h': '' }, '它刷过的视频'),
+
       )
     }
 
