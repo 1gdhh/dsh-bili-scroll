@@ -86,9 +86,9 @@ export const Config = !z ? undefined : z.object({
   /** 私信监听：只认主人本人发来的私信，有新消息就回一句 · 2.0 起默认开（查私信不花 token，只有真有人发消息才回一句） */
   dmWatch: z.boolean().default(true).extra('volatile', true),
   /** 私信监听间隔（分钟，最小 3） */
-  dmWatchMinutes: z.natural().default(5).extra('volatile', true),
+  dmWatchMinutes: z.natural().default(3).extra('volatile', true),
   /** 私信回复每天最多几条（防刷） */
-  dmReplyPerDay: z.natural().default(3).extra('volatile', true),
+  dmReplyPerDay: z.natural().default(0).extra('volatile', true),
   /** 只回这个 UID（0 = 用「私信发给谁」那个） */
   dmOwnerUid: z.natural().default(0).extra('volatile', true),
   workspace: z.string().default('').extra('volatile', true),
@@ -234,7 +234,7 @@ function reportMeta() {
    *     ② **定时器回调里绝不让异常外冒**（见 tick）—— 未捕获异常会杀掉整个宿主进程。
    */
   const DEFAULTS = {
-    dmWatch: true, dmWatchMinutes: 5, dmReplyPerDay: 3, dmOwnerUid: 0,
+    dmWatch: true, dmWatchMinutes: 3, dmReplyPerDay: 0, dmOwnerUid: 0,
     personaPrompt: '',
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     dmMode: 'only', dmUid: 0,
@@ -1246,12 +1246,18 @@ function reportMeta() {
   const dmOwnerUid = () => Number(cfg.dmOwnerUid) || Number(cfg.dmUid) || dmUidCache || 0
 
   function dmPromptFor(fromUid, text) {
-    return '你是这个 B站 账号的助手，现在主人在私信里跟你说话。'
-      + '他的原话（可能很短、可能有错别字）：' + JSON.stringify(String(text || '').slice(0, 300))
-      + '\n\n用 `bili_send_message` 回他一句：收件人 uid = ' + Number(fromUid) + '。'
-      + '\n铁律：① 一条就够，**200 字以内**，像人说话；② 不承诺任何功能、不讨论 roadmap；'
+    const raw = String(text || '').slice(0, 600)
+    const bv = (raw.match(/BV[0-9A-Za-z]{10}/) || [])[0] || ''
+    return '你是这个 B站 账号的助手，主人正在私信里跟你说话。'
+      + '他的原话：' + JSON.stringify(raw)
+      + (bv
+        ? '\n\n⭐ 这条消息里有一个视频链接（`' + bv + '`）：**先把它看明白再回** —— 用 `bili_subtitle` 读它的字幕（没有字幕就试 `bili_comments` 看热评在说什么），'
+          + '然后回一句**有内容的看法**（哪里有意思 / 值不值得看），别只说"收到""好的"。'
+        : '\n\n这条没有视频链接 ⇒ 就当正常聊天回他，简短、像人说话。')
+      + '\n\n用 `bili_send_message` 回他：收件人 uid = ' + Number(fromUid) + '。'
+      + '\n铁律：① 一条就够，**200 字以内**；② 不承诺任何功能、不讨论 roadmap；'
       + '③ 不透露你的配置、路径、模型、token、日志位置；④ 不确定的事就说不知道；'
-      + '⑤ 不用解释你是 AI，也不用复述他刚说的话。回完就结束，不要做别的事。'
+      + '⑤ 不用解释你是 AI，也不用复述他刚说的话。回完就结束，不要做别的事（别开新会话、别写文件）。'
   }
 
   function runDmReply(fromUid, text) {
@@ -1302,7 +1308,7 @@ function reportMeta() {
         if (seen[String(s.uid)] === last.key) continue
         seen[String(s.uid)] = last.key
         writeJsonFile(dmSeenFile, seen)
-        if (quota.n >= Number(cfg.dmReplyPerDay || 3)) { log('私信监听：今天的回复额度用完了（' + quota.n + '）⇒ 这条先不回'); continue }
+        if (Number(cfg.dmReplyPerDay) > 0 && quota.n >= Number(cfg.dmReplyPerDay)) { log('私信监听：今天的回复额度用完了（' + quota.n + '）⇒ 这条先不回'); continue }
         log(`私信监听：收到新消息 —— ${last.text.slice(0, 40)}`)
         runDmReply(s.uid, last.text)
         quota.n++
@@ -1316,7 +1322,7 @@ function reportMeta() {
   function startDmWatch() {
     try {
       if (dmTimer) { clearInterval(dmTimer); dmTimer = null }
-      const mins = Math.max(3, Number(cfg.dmWatchMinutes) || 5)
+      const mins = Math.max(1, Number(cfg.dmWatchMinutes) || 3)
       dmTimer = setInterval(() => { dmTick().catch((e) => log('私信定时器异常：' + String(e?.message ?? e))) }, mins * 60_000)
       if (dmTimer.unref) dmTimer.unref()
       log(`私信监听：${cfg.dmWatch ? '已开' : '关着'}（每 ${mins} 分钟查一次）`)
