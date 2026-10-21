@@ -913,9 +913,26 @@ function reportMeta() {
       //    ⇒ 读错人设、甚至把别的目录的设定读进来 ✓
       //    ⭐ 现在的规矩：**留空 = 不读设定**（宁可按中性说话，也别猜错 ✓）；要按人设就自己填工作区 ✓。
     // ⭐ 2026-10-21：优先用「人设提示词」这个框（主人原话：工作区确实可以不要，有人不会用，改成直接填人设提示词确实更方便）
-    const persona = String(cfg.personaPrompt || '').trim()
+    // ⭐ 2026-10-21：人设框既收「文字」，也收「一个路径」——填路径就去读那个文件/目录下的 AGENTS.md，
+    //    这样"从一个文件导入"和"自己写一段"用同一个框，不用额外按钮 ✓（老用户的工作区兜底逻辑不变）
+    const personaRaw = String(cfg.personaPrompt || '').trim()
+    let persona = personaRaw
+    let personaFromFile = ''
+    if (personaRaw && !personaRaw.includes('\n')) {
+      const looksPath = /^[A-Za-z]:[\\/]/.test(personaRaw) || /^\\\\/.test(personaRaw) || personaRaw.startsWith('~/')
+      if (looksPath) {
+        try {
+          let f = personaRaw.replace(/^~\//, process.env.USERPROFILE ? process.env.USERPROFILE + '/' : '~/')
+          if (existsSync(f) && statSync(f).isDirectory()) f = join(f, 'AGENTS.md')
+          if (existsSync(f)) {
+            persona = readFileSync(f, 'utf8')
+            personaFromFile = f
+          }
+        } catch { /* 读不到就当普通文字 */ }
+      }
+    }
     if (persona) {
-      ownerDoc = '\n\n===== 使用者写的人设提示词（**按这个来**）=====\n'
+      ownerDoc = '\n\n===== 使用者的人设' + (personaFromFile ? '（读自 ' + personaFromFile + '）' : '提示词') + '（**按这个来**）=====\n'
         + persona.slice(0, 6000)
         + '\n===== 人设结束 =====\n'
     }

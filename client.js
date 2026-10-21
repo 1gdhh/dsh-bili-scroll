@@ -677,18 +677,13 @@ function WatchTab() {
           h('div', { 'data-bd-label': '' }, '它按什么说话（人设提示词，可留空）'),
           h('textarea', {
             'data-bd-input': '', rows: 6,
-            placeholder: '想让它怎么说话就写在这儿 —— 比如「叫我某某，说话简短点，别用 emoji」。留空 = 按中性说话（不扮演任何人）。',
+            placeholder: '想让它怎么说话就写在这儿 —— 比如「叫我某某，说话简短点，别用 emoji」。也可以直接填一个文件路径（如 D:\\deepseek\\AGENTS.md，或它所在的那个目录），每次运行都会重新读那个文件。留空 = 按中性说话（不扮演任何人）。',
             value: persona ?? '', onChange: (e) => setPersona(e.target.value),
           }),
-          h('div', { 'data-bd-row': '' },
+          h('div', { 'data-bd-note': '' },
             (st.personaFromWs && String(persona || '').trim() === '')
-              ? h('button', { 'data-bd-btn': '', onClick: () => setPersona(st.personaFromWs) }, '从工作区的 AGENTS.md 导入')
-              : null,
-            h('div', { 'data-bd-note': '' },
-              (st.personaFromWs && String(persona || '').trim() === '')
-                ? '你之前是用「工作区」里那份 AGENTS.md 说话的 —— 内容已经读到了，点左边导入就能就地改；'
-                  + '留空也没关系，那份照旧生效。'
-                : '改完点下面「保存」；下一轮就按这个说话。留空 = 按中性说话。')),
+              ? '你现在还是用「工作区」里那份 AGENTS.md 说话的（照旧生效）。想把它搬到这儿改，就把上面的路径填成本机那个目录。'
+              : '改完点下面「保存」；下一轮就按这个说话。'),
           h('div', { 'data-bd-label': '' }, '日报写多细'),
           h('select', {
             'data-bd-input': '', value: rl ?? 'full',
