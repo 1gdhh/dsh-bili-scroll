@@ -84,32 +84,39 @@ window.__ModuleLoader__.load({
 [data-bd-pre]{margin:6px 0 0;padding:8px 9px;border-radius:8px;max-height:170px;overflow:auto;font-size:11px;
   line-height:15px;white-space:pre-wrap;word-break:break-all;
   background:var(--dsw-alias-bg-overlay,rgba(0,0,0,.25));color:var(--dsw-alias-label-secondary,#c9ccd1);}
-    [data-bd-list]{margin:8px 0 0;max-height:420px;overflow:auto;display:flex;flex-direction:column;gap:6px;}
-    /* ⭐ 2026-10-21：标题看不见 ⇒ 颜色是"继承"来的，会话页里继承了深色底上的深色字。
-       改成显式取主题变量（浅色主题下这个变量是深色字，会自动适配） */
-    [data-bd-item]{padding:7px 9px;border-radius:8px;background:var(--dsw-alias-bg-l1,#15171c);border:1px solid var(--dsw-alias-separator,#262a33);display:flex;gap:9px;align-items:flex-start;color:var(--dsw-alias-label-primary,#e8eaed);}
-    [data-bd-item-t]{color:var(--dsw-alias-label-primary,#e8eaed);}
-    [data-bd-item-n]{color:var(--dsw-alias-label-tertiary,#9aa0a6);}
-    [data-bd-cover]{width:86px;height:54px;object-fit:cover;border-radius:6px;background:#0d0f13;flex:0 0 auto;}
-    [data-bd-item-body]{min-width:0;flex:1 1 auto;}
-    [data-bd-item-t]{font-size:12px;line-height:17px;}
+    /* ⭐ 2026-10-21 重做：卡片网格 + 颜色全部取「真实存在」的主题变量
+       （之前用了 --dsw-alias-bg-l1 / --dsw-alias-separator —— 这两个在应用里根本不存在 ⇒
+        fallback 落到硬编码深色，而文字用的 --dsw-alias-label-primary 是存在的 ⇒ 浅色主题下变近黑 ⇒ 黑底黑字看不见） */
+    [data-bd-list]{margin:10px 0 0;max-height:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;}
+    [data-bd-item]{display:flex;flex-direction:column;overflow:hidden;border-radius:12px;
+      background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.06));
+      border:1px solid var(--dsw-alias-bg-layer-3,rgba(127,127,127,.22));
+      color:var(--dsw-alias-label-primary,inherit);}
+    [data-bd-cover]{display:block;width:100%;aspect-ratio:16/9;height:auto;object-fit:cover;
+      background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.1));}
+    [data-bd-item-body]{display:flex;flex-direction:column;gap:4px;padding:9px 11px;min-width:0;}
+    [data-bd-item-t]{font-size:13px;line-height:18px;font-weight:600;
+      color:var(--dsw-alias-label-primary,inherit);
+      display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;}
     [data-bd-item-t] a{color:inherit;text-decoration:none;}
     [data-bd-item-t] a:hover{text-decoration:underline;}
-    [data-bd-chip]{cursor:pointer;font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--dsw-alias-separator,#2a2f3a);background:transparent;color:var(--dsw-alias-label-secondary,#9aa0a6);}
-    [data-bd-chip][aria-selected=true]{color:var(--dsw-alias-label-primary,#e8eaed);border-color:var(--dsw-alias-brand,#4c8dff);background:rgba(76,141,255,.14);}
-    [data-bd-tier]{font-weight:600;}
+    [data-bd-item-n]{font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary,inherit);margin:0;}
+    [data-bd-item-why]{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary,inherit);
+      display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+    [data-bd-clickable]{cursor:pointer;transition:border-color .12s,background .12s;}
+    [data-bd-clickable]:hover{border-color:var(--dsw-alias-brand-primary,rgba(76,141,255,.5));
+      background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.1));}
+    [data-bd-chip]{cursor:pointer;font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;
+      border:1px solid var(--dsw-alias-bg-layer-3,rgba(127,127,127,.22));background:transparent;
+      color:var(--dsw-alias-label-secondary,inherit);}
+    [data-bd-chip]:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.1));}
+    [data-bd-chip][aria-selected=true]{color:var(--dsw-alias-label-primary,inherit);
+      border-color:var(--dsw-alias-brand-primary,rgba(76,141,255,.6));
+      background:color-mix(in srgb,var(--dsw-alias-brand-primary,#4c8dff) 16%,transparent);}
+    [data-bd-tier]{font-weight:600;color:var(--dsw-alias-label-secondary,inherit);}
     [data-bd-tier='值得看']{color:#3fb950;}
     [data-bd-tier='可以看']{color:#d29922;}
-    [data-bd-tier='不值当']{color:#8b949e;}
-    [data-bd-item-why]{margin-top:3px;font-size:12px;line-height:17px;color:var(--dsw-alias-label-tertiary,#9aa0a6);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-    [data-bd-clickable]{cursor:pointer;transition:background .12s;}
-    [data-bd-clickable]:hover{background:var(--dsw-alias-bg-l2,#1b1e25);}
-    [data-bd-item-t]{white-space:normal;word-break:break-word;}
-    /* 会话头那个 tab 里，列表要撑满可用高度、条目更松一点 */
-    [data-bd-page] [data-bd-list]{max-height:none;flex:1 1 auto;}
-    [data-bd-page] [data-bd-item]{padding:10px 12px;}
-    [data-bd-page] [data-bd-cover]{width:112px;height:63px;}
-    [data-bd-item-n]{margin-top:3px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#9aa0a6);}
+    [data-bd-tier='不值当']{color:var(--dsw-alias-label-tertiary,inherit);}
 [data-bd-kv]{font-size:11px;line-height:18px;color:var(--dsw-alias-label-tertiary,#9aa0a6);word-break:break-all;}
 [data-bd-badge]{font-size:11px;padding:2px 7px;border-radius:6px;
   background:var(--dsw-alias-bg-overlay,rgba(128,128,128,.14));color:var(--dsw-alias-label-secondary,#c9ccd1);}
