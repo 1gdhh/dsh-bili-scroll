@@ -1301,6 +1301,8 @@ function reportMeta() {
   async function dmTick() {
     if (dmBusy) return
     dmBusy = true
+    // ⭐ 每一跳都重新读一次配置：设置页里刚改的（开关 / 间隔 / 发给谁）下一分钟就生效，不用重启
+    try { refreshCfg() } catch { /* 读不到就沿用旧值 */ }
     try {
       // ⭐ 2026-10-21：同一台机器上可能有两个宿主（桌面版 + web 版）都装着这个插件，
       //    两边都查私信 ⇒ 同一条消息可能被回两遍 ⇒ 用一个带 pid + 时间的锁，谁先跑谁干。
