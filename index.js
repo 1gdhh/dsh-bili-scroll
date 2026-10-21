@@ -434,6 +434,26 @@ function reportMeta() {
     return { clean, host }
   }
 
+  // ⭐ 2026-10-21 一次性迁移：2.0 把「私信双向」改成默认开、间隔 1 分钟、去掉每日上限，
+  //    但老用户的 config.json 里存着旧默认值（false / 5 / 3）⇒ 会盖掉新默认。
+  //    判据：三项**都还停在旧默认**才动（说明是真没碰过），碰过任何一项就尊重用户。
+  const MIG_200 = () => {
+    const marker = join(stateDir, '.mig-2.0.0')
+    try {
+      if (existsSync(marker)) return
+      const saved = readJson(join(stateDir, 'config.json'), {}) || {}
+      const oldAll = saved.dmWatch === false
+        && Number(saved.dmWatchMinutes) === 5
+        && Number(saved.dmReplyPerDay) === 3
+      if (oldAll) {
+        persistCfg({ dmWatch: true, dmWatchMinutes: 1, dmReplyPerDay: 0 })
+          .then(() => log('已把「私信双向」迁到 2.0 的默认：开着、每 1 分钟查一次、不限条数'))
+          .catch((e2) => log('迁移私信默认值失败（不影响使用）：' + String(e2?.message ?? e2)))
+      }
+      writeFileSync(marker, String(Date.now()), 'utf8')
+    } catch (e2) { log('迁移检查出错（不影响使用）：' + String(e2?.message ?? e2)) }
+  }
+
   ensureHomeFiles(pluginDir, stateDir, log)
 
   // ⭐ 值班章程单独记账（跟 mcp_server.py 不一样：用户改过就得留着 —— 见 state.mjs 的 ensureCharter）
@@ -1343,6 +1363,8 @@ function reportMeta() {
   }
 
 
+
+  try { MIG_200() } catch (e) { log('迁移没跑：' + String(e?.message ?? e)) }
 
   try { startDmWatch() } catch (e) { log('私信监听没起来：' + String(e?.message ?? e)) }
   ctx.effect(() => () => { try { if (dmTimer) clearInterval(dmTimer) } catch { /* 忽略 */ } }, 'bili-duty: 私信监听')
