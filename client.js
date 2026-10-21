@@ -289,7 +289,7 @@ function WatchTab() {
         if (cfg && mention === null) setMention(cfg.mentionName || '')
         if (cfg && dmUid === null) setDmUid(cfg.dmUid ? String(cfg.dmUid) : '')
         if (cfg && dmMode === null) setDmMode(cfg.dmMode || 'only')
-        if (cfg && dmWatch === null) setDmWatch(Boolean(cfg.dmWatch))
+        if (cfg && dmWatch === null) setDmWatch(cfg.dmWatch !== false)   // 2.0 起默认开
         if (cfg && dmWatchMin === null) setDmWatchMin(String(cfg.dmWatchMinutes ?? 5))
         if (cfg && dmPerDay === null) setDmPerDay(String(cfg.dmReplyPerDay ?? 3))
         if (cfg && favId === null) setFavId(String(cfg.favFolderId ?? 0))
@@ -590,14 +590,50 @@ function WatchTab() {
 
         /* ── 发言与转写 ── */
         h('div', { 'data-bd-sec': '', 'data-bd-group': 'social', 'data-bd-away': tab === 'social' ? undefined : '' },
-          h('div', { 'data-bd-h': '' }, '它会不会替你说话'),
-          h(ToggleRow, {
+          h('div', { 'data-bd-h': '' }, '它怎么把结果给你'),
+          h('div', { 'data-bd-label': '' }, '投递方式'),
+          h('select', {
+            'data-bd-input': '', value: dmMode ?? 'only',
+            onChange: (e) => { setDmMode(e.target.value); patch({ dmMode: e.target.value }, '投递方式') },
+          },
+            h('option', { value: 'only' }, '只发私信 —— 一条公开评论都不发（默认，最不打扰别人）'),
+            h('option', { value: 'off' }, '只发评论 —— 在视频下面 @ 你（公开，别人也看得见）'),
+            h('option', { value: 'both' }, '私信 + 评论 —— 两边都发')),
+          h('div', { 'data-bd-label': '' }, '发给谁 / @ 谁（B站 昵称）'),
+          h('input', {
+            'data-bd-input': '', value: mention ?? '',
+            placeholder: '填你自己的 B站 昵称；私信按它查 UID，评论也 @ 它',
+            onChange: (e) => setMention(e.target.value),
+            onBlur: () => { const v = String(mention || '').trim(); setMention(v); patch({ mentionName: v }, '发给谁') },
+          }),
+          (dmMode && dmMode !== 'off') ? h('div', { 'data-bd-note': '' }, '私信会发给他（用昵称自动查一次 UID）；查不到就改回只发评论，不会一条都不送。') : null,
+          (dmMode && dmMode !== 'off') ? h('div', { 'data-bd-note': '' }, '私信内容 = 本轮每条的「标题 + 链接 + 一句话」，一轮合并成一条发。⚠️ 建议先让这个号和收件人互关：B站 对「陌生人私信」会限流，还可能不弹提醒。') : null,
+
+          (dmMode === 'off' || dmMode === 'both') ? h('div', { 'data-bd-sep': '' }) : null,
+          (dmMode === 'off' || dmMode === 'both') ? h(ToggleRow, {
+            label: '自动评论并 @ 你',
+            note: '开了之后它会在挑中的视频下面留评论，并 @ 上面那个人',
+            on: sw('autoComment'),
+            onChange: (v) => patch({ autoComment: v }, '自动评论'),
+          }) : null,
+          (dmMode === 'off' || dmMode === 'both') && sw('autoComment') ? h('div', { 'data-bd-sub': '' },
+            h('div', { 'data-bd-row': '' },
+              h('div', { 'data-bd-grow': '' },
+                h('div', { 'data-bd-label': '' }, '每轮最多发几条评论'),
+                h('div', { 'data-bd-note': '' }, '每条评论里 @ 一次上面那个人；填 0 = 这一轮不发评论')),
+              h('input', {
+                'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 0, max: 20,
+                value: perRound ?? '',
+                onChange: (e) => setPerRound(e.target.value),
+                onBlur: () => { const n = Math.max(0, Math.min(Number(perRound) || 0, 20)); setPerRound(String(n)); patch({ commentPerRound: n }, '每轮发几条评论') },
+              }))) : null,
+          (dmMode === 'off' || dmMode === 'both') ? h(ToggleRow, {
             label: '回复评论（只回楼中楼）',
-            note: '默认关；开了之后它只回「直接回复到你那条评论下面的人」，不参与讨论',
+            note: '开了之后它只回「直接回复到你那条评论下面的人」，不参与讨论',
             on: sw('replyToComments'),
             onChange: (v) => patch({ replyToComments: v }, '回复评论'),
-          }),
-          sw('replyToComments') ? h('div', { 'data-bd-sub': '' },
+          }) : null,
+          (dmMode === 'off' || dmMode === 'both') && sw('replyToComments') ? h('div', { 'data-bd-sub': '' },
             h('div', { 'data-bd-row': '' },
               h('div', { 'data-bd-grow': '' },
                 h('div', { 'data-bd-label': '' }, '每轮最多回几条'),
@@ -606,50 +642,13 @@ function WatchTab() {
                 'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 1, max: 10,
                 value: replyPer ?? '',
                 onChange: (e) => setReplyPer(e.target.value),
-                onBlur: () => { const n = Math.max(1, Math.min(Number(replyPer) || 1, 10)); setReplyPer(String(n)); patch({ replyPerRound: n }, '每轮几条回复') },
+                onBlur: () => { const n = Math.max(1, Math.min(Number(replyPer) || 1, 10)); setReplyPer(String(n)); patch({ replyPerRound: n }, '每轮回几条') },
               }))) : null,
-          h(ToggleRow, {
-            label: '自动评论并 @ 你',
-            note: '默认关；开了之后它会在挑中的视频下面留评论，并 @ 你填的那个人',
-            on: sw('autoComment'),
-            onChange: (v) => patch({ autoComment: v }, '自动评论'),
-          }),
-          sw('autoComment') ? h('div', { 'data-bd-sub': '' },
-            h('div', { 'data-bd-row': '' },
-              h('div', { 'data-bd-grow': '' },
-                h('div', { 'data-bd-label': '' }, '每轮最多发几条评论'),
-                h('div', { 'data-bd-note': '' }, '每条评论里 @ 一次下面那个人；填 0 = 这一轮不发评论')),
-              h('input', {
-                'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 0, max: 20,
-                value: perRound ?? '',
-                onChange: (e) => setPerRound(e.target.value),
-                // ⭐ 0 是合法值（= 这一轮不发评论）；范围与 index.js 的 clampPatch 一致（0–20）
-                onBlur: () => { const n = Math.max(0, Math.min(Number(perRound) || 0, 20)); setPerRound(String(n)); patch({ commentPerRound: n }, '每轮几条评论') },
-              })),
-            h('div', { 'data-bd-label': '' }, '要 @ 谁（B站 昵称）'),
-            h('input', {
-              'data-bd-input': '', value: mention ?? '',
-              placeholder: '填你要 @ 的那个人的 B站 昵称；留空 = 只写报告、不发评论',
-              onChange: (e) => setMention(e.target.value),
-              onBlur: () => { const v = String(mention || '').trim(); setMention(v); patch({ mentionName: v }, '要 @ 谁') },
-            }),
-            h('div', { 'data-bd-note': '' }, '留空的话它就不发评论了 —— 因为评论存在的意义就是 @ 那一下')) : null,
-          h('div', { 'data-bd-label': '' }, '投递方式（评论 还是 私信）'),
-          h('select', {
-            'data-bd-input': '', value: dmMode ?? 'only',
-            onChange: (e) => { setDmMode(e.target.value); patch({ dmMode: e.target.value }, '投递方式') },
-          },
-            h('option', { value: 'off' }, '只发评论 —— 在视频下面 @ 你（公开，别人也看得见）'),
-            h('option', { value: 'only' }, '只私信 —— 一条公开评论都不发（默认，最不打扰别人）'),
-            h('option', { value: 'both' }, '评论 + 私信 —— 两边都发')),
-          (dmMode && dmMode !== 'off') ? h('div', { 'data-bd-sub': '' },
-            h('div', { 'data-bd-note': '' }, '私信会发给上面「要 @ 谁」那个人（用昵称自动查一次 UID）；查不到就改回只发评论，不会一条都不送。'),
-            h('div', { 'data-bd-note': '' }, '私信内容 = 本轮每条的「标题 + 链接 + 一句话」，一轮合并成一条发（不受 150 字限制）'),
-            h('div', { 'data-bd-note': '' }, '⚠️ 建议先让这个号和收件人互关：B站 对「陌生人私信」会限流，还可能不弹提醒')) : null,
+
           h('div', { 'data-bd-sep': '' }),
           h(ToggleRow, {
             label: '私信双向（有人私信它就回一句）',
-            note: '默认关。开了之后它每几分钟纯代码查一次私信（不花 token）；只回你本人发来的新消息，回复上限在下面设。',
+            note: '默认开：它每几分钟纯代码查一次私信（不花 token），只有你发来新消息时才回一句；不想用就关掉，或者干脆不主动私信它。',
             on: Boolean(dmWatch),
             onChange: (v) => { setDmWatch(v); patch({ dmWatch: v }, '私信双向') },
           }),

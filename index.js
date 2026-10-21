@@ -83,8 +83,8 @@ export const Config = !z ? undefined : z.object({
   /** 跑 headless 时的工作目录 */
   /** ⭐ 人设提示词：使用者想让它怎么说话（比"填工作区"对新手友好得多）· 留空 = 按中性说话 */
   personaPrompt: z.string().default('').extra('volatile', true),
-  /** 私信监听：只认主人本人发来的私信，有新消息就回一句 · 默认关（开了会花 token） */
-  dmWatch: z.boolean().default(false).extra('volatile', true),
+  /** 私信监听：只认主人本人发来的私信，有新消息就回一句 · 2.0 起默认开（查私信不花 token，只有真有人发消息才回一句） */
+  dmWatch: z.boolean().default(true).extra('volatile', true),
   /** 私信监听间隔（分钟，最小 3） */
   dmWatchMinutes: z.natural().default(5).extra('volatile', true),
   /** 私信回复每天最多几条（防刷） */
@@ -234,7 +234,7 @@ function reportMeta() {
    *     ② **定时器回调里绝不让异常外冒**（见 tick）—— 未捕获异常会杀掉整个宿主进程。
    */
   const DEFAULTS = {
-    dmWatch: false, dmWatchMinutes: 5, dmReplyPerDay: 3, dmOwnerUid: 0,
+    dmWatch: true, dmWatchMinutes: 5, dmReplyPerDay: 3, dmOwnerUid: 0,
     personaPrompt: '',
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     dmMode: 'only', dmUid: 0,
