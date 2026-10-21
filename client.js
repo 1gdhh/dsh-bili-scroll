@@ -645,15 +645,18 @@ function WatchTab() {
             h('option', { value: 'only' }, '只私信 —— 一条公开评论都不发（默认，最不打扰别人）'),
             h('option', { value: 'both' }, '评论 + 私信 —— 两边都发')),
           (dmMode && dmMode !== 'off') ? h('div', { 'data-bd-sub': '' },
-            h('div', { 'data-bd-label': '' }, '私信发给谁（B站 UID，数字）'),
+          h('div', { 'data-bd-label': '' }, '私信收件人（一般不用填 —— 默认就是上面「要 @ 谁」那个人）'),
             h('input', {
               'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 0, value: dmUid ?? '',
-              placeholder: '留空也行：会用上面「要 @ 谁」的昵称自动查；查不到就改回评论',
+              placeholder: '留空即可；只有在「想发给另一个人」时才填数字 UID',
               onChange: (e) => setDmUid(e.target.value),
               onBlur: () => { const n = Math.max(0, Number(dmUid) || 0); setDmUid(n ? String(n) : ''); patch({ dmUid: n }, '私信收件人') },
             }),
             h('div', { 'data-bd-note': '' }, '私信内容 = 本轮每条的「标题 + 链接 + 一句话」，一轮合并成一条发（不受 150 字限制）'),
             h('div', { 'data-bd-note': '' }, '⚠️ 建议先让这个号和收件人互关：B站 对「陌生人私信」会限流，还可能不弹提醒')) : null,
+            (Number(st.dmUidResolved) > 0)
+              ? h('div', { 'data-bd-note': '' }, '现在会发给：UID ' + st.dmUidResolved + (st.config?.mentionName ? '（' + st.config.mentionName + '）' : ''))
+              : h('div', { 'data-bd-note': '' }, '现在还没定收件人 —— 会用「要 @ 谁」的昵称自动查一次；查不到就改回只发评论。'),
           h('div', { 'data-bd-sep': '' }),
           h(ToggleRow, {
             label: '私信双向（有人私信它就回一句）',

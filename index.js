@@ -603,14 +603,6 @@ function reportMeta() {
         dmMode: cfg.dmMode,
         dmUid: Number(cfg.dmUid) || 0,
         transcribe: cfg.transcribe,
-      // ⭐ 人设：老用户（只填过工作区）可以一键导入他那份 AGENTS.md
-      personaFromWs: (() => {
-        if (String(cfg.personaPrompt || '').trim()) return ''
-        const ws = String(cfg.workspace || '').trim()
-        if (!ws) return ''
-        const f = join(ws, 'AGENTS.md')
-        try { return existsSync(f) ? readFileSync(f, 'utf8').slice(0, 4000) : '' } catch { return '' }
-      })(),
         loggedIn: hasCredential(),
         home: stateDir,
         report: join(outDir, `${dayKey(now)}.md`),
@@ -1768,6 +1760,15 @@ function reportMeta() {
       loggedIn: hasCredential(),
       venvReady: venvReadyNow(),
       version: myVersion(),
+      dmUidResolved: Number(cfg.dmUid) || dmUidCache || 0,
+      // ⭐ 人设：老用户（只填过工作区）可以一键导入他那份 AGENTS.md
+      personaFromWs: (() => {
+        if (String(cfg.personaPrompt || '').trim()) return ''
+        const ws = String(cfg.workspace || '').trim()
+        if (!ws) return ''
+        const f = join(ws, 'AGENTS.md')
+        try { return existsSync(f) ? readFileSync(f, 'utf8').slice(0, 4000) : '' } catch { return '' }
+      })(),
       // 2026-10-18：这几项"本地存了、但没能同步到 DSH 原生设置" ⇒ 设置页要告诉用户
       // （DSH 0.2.1 某些启动方式会拒写：profile reload requires the root Include entry）
       notSynced: Object.keys(readOverride()),
