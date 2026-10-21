@@ -240,7 +240,6 @@ function WatchTab() {
       const [favFolders, setFavFolders] = React.useState(null)   // 收藏夹列表（下拉用，null = 还没读）
       const [favId, setFavId] = React.useState(null)             // 选中的收藏夹 fid（字符串）
       const [persona, setPersona] = React.useState(null)   // 人设提示词草稿
-      const [ws, setWs] = React.useState(null)
       const [rl, setRl] = React.useState(null)
       const [newVer, setNewVer] = React.useState('')       // 发现的新版本号（空 = 没发现）          // 日报形态：full / brief / off
       // ⚠️ 输入框必须绑"本地草稿"：页面每 5 秒轮询 /status，服务端那份会把 config 盖掉
@@ -278,7 +277,6 @@ function WatchTab() {
       const cfg = st?.config
       React.useEffect(() => {
         if (cfg && kws === null) setKws((cfg.keywords || []).join('\n'))
-        if (cfg && ws === null) setWs(cfg.workspace || '')
         if (cfg && persona === null) setPersona(cfg.personaPrompt || '')
         if (cfg && rl === null) setRl(cfg.reportLevel || 'full')
         if (cfg && perDay === null) setPerDay(String(cfg.perDay ?? 5))
@@ -514,7 +512,7 @@ function WatchTab() {
 
       const onSaveText = async () => {
         const list = String(kws || '').split('\n').map((s) => s.trim()).filter(Boolean)
-        await patch({ keywords: list, workspace: String(ws || '').trim(), personaPrompt: String(persona || '').trim() }, '关键词 / 人设 / 工作区')
+        await patch({ keywords: list, personaPrompt: String(persona || '').trim() }, '关键词 / 人设 / 工作区')
       }
 
       if (!cfg) {
@@ -783,13 +781,6 @@ function WatchTab() {
 
         /* ── 它是怎么干活的（给他看的） ── */
         h('div', { 'data-bd-sec': '', 'data-bd-group': 'adv', 'data-bd-away': tab === 'adv' ? undefined : '' },
-          h('div', { 'data-bd-label': '' }, '工作区（高级：想让它按某个目录里的 AGENTS.md 认设定时才填）'),
-          h('input', {
-            'data-bd-input': '', value: ws ?? '',
-            placeholder: '填你自己的工作区路径；留空 = 不读那边的设定（推荐直接用人设提示词）',
-            onChange: (e) => setWs(e.target.value),
-          }),
-          h('div', { 'data-bd-note': '' }, '⭐ 上面「人设提示词」优先；这里只在人设留空时才生效。'),
           h('div', { 'data-bd-h': '' }, '它的地盘'),
           h('div', { 'data-bd-kv': '' },
             `家目录：${st.home}`,
