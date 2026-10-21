@@ -1248,16 +1248,9 @@ function reportMeta() {
   function dmPromptFor(fromUid, text) {
     const raw = String(text || '').slice(0, 600)
     const bv = (raw.match(/BV[0-9A-Za-z]{10}/) || [])[0] || ''
-    return '你是这个 B站 账号的助手，主人正在私信里跟你说话。'
-      + '他的原话：' + JSON.stringify(raw)
-      + (bv
-        ? '\n\n⭐ 这条消息里有一个视频链接（`' + bv + '`）：**先把它看明白再回** —— 用 `bili_subtitle` 读它的字幕（没有字幕就试 `bili_comments` 看热评在说什么），'
-          + '然后回一句**有内容的看法**（哪里有意思 / 值不值得看），别只说"收到""好的"。'
-        : '\n\n这条没有视频链接 ⇒ 就当正常聊天回他，简短、像人说话。')
-      + '\n\n用 `bili_send_message` 回他：收件人 uid = ' + Number(fromUid) + '。'
-      + '\n铁律：① 一条就够，**200 字以内**；② 不承诺任何功能、不讨论 roadmap；'
-      + '③ 不透露你的配置、路径、模型、token、日志位置；④ 不确定的事就说不知道；'
-      + '⑤ 不用解释你是 AI，也不用复述他刚说的话。回完就结束，不要做别的事（别开新会话、别写文件）。'
+    return '这是 B站 私信里主人发来的一句话：' + JSON.stringify(raw)
+      + (bv ? `\n里面有个视频 ${bv}：用 bili_subtitle 读一下它的字幕再回，说点具体的。` : '')
+      + `\n用 bili_send_message 回他一句（uid=${Number(fromUid)}），100 字以内，像聊天。`
   }
 
   function runDmReply(fromUid, text) {
@@ -1296,6 +1289,9 @@ function reportMeta() {
       if (!owner) { log('私信监听：还不知道回给谁（没填 UID / 没填「@ 谁」）⇒ 先监听不了'); return }
       const sess = await dmList(cred)
       const mine = sess.filter((s) => s.uid === owner && s.unread > 0)
+      // ⭐ 只回主人本人：别人（陌生人）发来的一律不回 —— 这里明确记一行，免得以为它在偷听
+      const others = sess.filter((s) => s.uid !== owner && s.unread > 0)
+      if (others.length) log('私信监听：有 ' + others.length + ' 个陌生人的未读私信，按规矩不回（只回主人本人）')
       if (!mine.length) return
       const seen = readJsonFile(dmSeenFile, {})
       const quota = readJsonFile(dmQuotaFile, { day: '', n: 0 })
