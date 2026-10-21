@@ -727,7 +727,11 @@ function WatchTab() {
             (st.personaFromWs && String(persona || '').trim() === '')
               ? h('button', { 'data-bd-btn': '', onClick: () => setPersona(st.personaFromWs) }, '从工作区的 AGENTS.md 导入')
               : null,
-            h('div', { 'data-bd-note': '' }, '改完点下面「保存」；下一轮就按这个说话。')),
+            h('div', { 'data-bd-note': '' },
+              (st.personaFromWs && String(persona || '').trim() === '')
+                ? '你之前是用「工作区」里那份 AGENTS.md 说话的 —— 内容已经读到了，点左边导入就能就地改；'
+                  + '留空也没关系，那份照旧生效。'
+                : '改完点下面「保存」；下一轮就按这个说话。留空 = 按中性说话。')),
           h('div', { 'data-bd-label': '' }, '日报写多细'),
           h('select', {
             'data-bd-input': '', value: rl ?? 'full',
