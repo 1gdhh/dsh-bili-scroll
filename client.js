@@ -644,7 +644,7 @@ function WatchTab() {
           h('div', { 'data-bd-sep': '' }),
           h(ToggleRow, {
             label: '私信双向（有人私信它就回一句）',
-            note: '默认开。你在 B站 私信里跟它说话，它会回你；陌生人的私信它不回。',
+            note: '默认开。你在 B站 私信里跟它说话，它会回你（陌生人的私信不回）。⭐ 查私信本身不花 token，只有真收到你的新消息时才花一点点。',
             on: Boolean(dmWatch),
             onChange: (v) => { setDmWatch(v); patch({ dmWatch: v }, '私信双向') },
           }),
