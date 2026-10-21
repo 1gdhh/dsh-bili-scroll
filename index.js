@@ -31,6 +31,7 @@ import { McpClient } from './lib/mcp.mjs'
 import { verifyRecent, appendVerifyToReport } from './lib/verify.mjs'
 import { WINDOWS, stateDirOf, readJson, writeJson, ensureHomeFiles, ensureCharter, charterPath, inWindow, dayKey } from './lib/state.mjs'
 import { loginStart, loginPoll, saveCredential, renderQrPng } from './lib/login.mjs'
+import { resolveUid } from './lib/uid.mjs'
 import { ensureUv } from './lib/uvfetch.mjs'
 
 export const name = 'bili-scroll'
@@ -55,7 +56,7 @@ export const Config = !z ? undefined : z.object({
   /** 自动评论 @ 使用者（默认关 —— 会拿用户的号说话，必须他自己开） */
   autoComment: z.boolean().default(false).extra('volatile', true),
   /** ⭐ 私信投递：off=只发评论（现状）· only=只私信（完全不公开评论）· both=评论 + 私信 */
-  dmMode: z.string().default('off').extra('volatile', true),
+  dmMode: z.string().default('only').extra('volatile', true),
   /** ⭐ 私信发给谁的 UID（数字）。要在 dmMode 不是 off 时填 */
   dmUid: z.natural().default(0).extra('volatile', true),
   /** 本地转写（没字幕的视频用 Whisper 转；默认关，要下模型） */
@@ -223,7 +224,7 @@ function reportMeta() {
    */
   const DEFAULTS = {
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
-    dmMode: 'off', dmUid: 0,
+    dmMode: 'only', dmUid: 0,
     keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '', reportLevel: 'full', replyToComments: false, replyPerRound: 1, favFolderId: 0,
   }
   const normalize = (src, base) => {
@@ -842,6 +843,21 @@ function reportMeta() {
     return { command: 'dsh', args: [], shell: true, fallback: true, hint }
   }
 
+  // ⭐ 私信默认化（2026-10-21）：用户常常只填了「@ 谁」的昵称、没填 UID
+  //    ⇒ 我们按昵称替他查一次 mid 并缓存；**查不到就降级回只发评论**（绝不能"默认私信"却一条都送不出去 ✗）
+  let dmUidCache = 0
+  async function warmDmUid() {
+    if (Number(cfg.dmUid) > 0) return Number(cfg.dmUid)
+    if (cfg.dmMode === 'off') return 0
+    const name = String(cfg.mentionName || '').trim()
+    if (!name) return 0
+    try {
+      const mid = await resolveUid(stateDir, name, log)
+      if (mid > 0) { dmUidCache = mid; log(`私信对象：${name} → ${mid}`) }
+      return mid
+    } catch (e) { log('查私信 UID 出错：' + String(e?.message ?? e)); return 0 }
+  }
+
   const promptFor = () => {
     // ⭐ 章程取哪一份：家里那份优先（ensureCharter 保证铺好；他改过的话就是他那份，升级的事由 ensureCharter 记账处理）
     const duty = charterPath(pluginDir, stateDir)
@@ -878,8 +894,12 @@ function reportMeta() {
     const left = Math.max(0, quota - already)
     // ⭐ 投递方式（2026-10-17 加）：dmMode = off（只评论）· only（只私信）· both（都发）
     //    commentOn 是"这一轮到底能不能发公开评论"的唯一判据（工具层的闸用的是同一套逻辑）
-    const commentOn = Boolean(cfg.autoComment && cfg.mentionName && cfg.dmMode !== 'only')
-    const dmOn = Boolean(cfg.dmMode !== 'off' && Number(cfg.dmUid) > 0)
+    const dmUidEff = Number(cfg.dmUid) || dmUidCache
+    const dmDegraded = cfg.dmMode === 'only' && !(dmUidEff > 0)
+    const dmModeEff = dmDegraded ? 'off' : cfg.dmMode
+    if (dmDegraded) log('⚠️ 选的是「只私信」，但不知道发给谁（没填 UID、也没填「@ 谁」，或查不到）⇒ 这一轮降级成只发评论')
+    const commentOn = Boolean(cfg.autoComment && cfg.mentionName && dmModeEff !== 'only')
+    const dmOn = Boolean(dmModeEff !== "off" && dmUidEff > 0)
     return `你是这个账号的 B站 助手。`
       + `下面是使用者的设定（如果有）—— **按它来**，别用你默认那套人格。`
       + ownerDoc
@@ -914,11 +934,11 @@ function reportMeta() {
       + `这是**给以后检索用**的（报告是给人看的，归档是给"回头翻"用的），别省略、也别只写挑中的。`
       + `自动评论并 @ ${cfg.mentionName || '（还没填要 @ 谁）'} 是${commentOn
         ? `开着的（每轮最多 ${cfg.commentPerRound} 条评论，每条在正文里纯文本 @ ${cfg.mentionName}，150 字内）`
-        : (cfg.dmMode === 'only'
+        : (dmModeEff === 'only'
           ? '关着的 —— 当前是「**只私信**」模式：**这一轮一条公开评论都不许发**，改走私信'
           : '关着的（只写报告，别发评论）')}。`
       + (dmOn
-        ? `⭐⭐ **私信投递**：用 bili_send_message 把这一轮的结果发到 UID **${Number(cfg.dmUid)}**。`
+        ? `⭐⭐ **私信投递**：用 bili_send_message 把这一轮的结果发到 UID **${dmUidEff}**。`
           + `内容**别照抄评论那套**：把本轮每条值得的写成 **标题 + 链接 + 一句话理由**`
           + `（私信是私人渠道、不占别人的地方，可以比评论长一点，但**别啰嗦**）。`
           + `🔴🔴 **但私信有长度上限 —— 实测 500 字符就顶了**：`
@@ -1677,6 +1697,7 @@ function reportMeta() {
     }
 
     if (req.method === 'POST' && path === '/api/bili-duty/run') {
+      if (cfg.dmMode !== 'off' && !(Number(cfg.dmUid) > 0)) await warmDmUid()
       return sendJson(res, 200, { ok: true, ...runDuty('manual') })
     }
 

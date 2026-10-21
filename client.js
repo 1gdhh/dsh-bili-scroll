@@ -281,7 +281,7 @@ function WatchTab() {
         if (cfg && replyPer === null) setReplyPer(String(cfg.replyPerRound ?? 1))
         if (cfg && mention === null) setMention(cfg.mentionName || '')
         if (cfg && dmUid === null) setDmUid(cfg.dmUid ? String(cfg.dmUid) : '')
-        if (cfg && dmMode === null) setDmMode(cfg.dmMode || 'off')
+        if (cfg && dmMode === null) setDmMode(cfg.dmMode || 'only')
         if (cfg && favId === null) setFavId(String(cfg.favFolderId ?? 0))
       }, [cfg])
 
@@ -607,17 +607,17 @@ function WatchTab() {
             h('div', { 'data-bd-note': '' }, '留空的话它就不发评论了 —— 因为评论存在的意义就是 @ 那一下')) : null,
           h('div', { 'data-bd-label': '' }, '投递方式（评论 还是 私信）'),
           h('select', {
-            'data-bd-input': '', value: dmMode ?? 'off',
+            'data-bd-input': '', value: dmMode ?? 'only',
             onChange: (e) => { setDmMode(e.target.value); patch({ dmMode: e.target.value }, '投递方式') },
           },
-            h('option', { value: 'off' }, '只发评论 —— 在视频下面 @ 你（默认）'),
-            h('option', { value: 'only' }, '只私信 —— 一条公开评论都不发，最不打扰别人'),
+            h('option', { value: 'off' }, '只发评论 —— 在视频下面 @ 你（公开，别人也看得见）'),
+            h('option', { value: 'only' }, '只私信 —— 一条公开评论都不发（默认，最不打扰别人）'),
             h('option', { value: 'both' }, '评论 + 私信 —— 两边都发')),
           (dmMode && dmMode !== 'off') ? h('div', { 'data-bd-sub': '' },
             h('div', { 'data-bd-label': '' }, '私信发给谁（B站 UID，数字）'),
             h('input', {
               'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 0, value: dmUid ?? '',
-              placeholder: '对方的数字 UID；比如你自己的另一个号',
+              placeholder: '留空也行：会用上面「要 @ 谁」的昵称自动查；查不到就改回评论',
               onChange: (e) => setDmUid(e.target.value),
               onBlur: () => { const n = Math.max(0, Number(dmUid) || 0); setDmUid(n ? String(n) : ''); patch({ dmUid: n }, '私信收件人') },
             }),
