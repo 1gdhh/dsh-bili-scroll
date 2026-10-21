@@ -49,6 +49,8 @@ window.__ModuleLoader__.load({
 
     const CSS = `
 [data-bd-page]{display:flex;flex-direction:column;gap:18px;padding:2px 2px 8px;max-width:640px;}
+    [data-bd-page][data-bd-wide]{max-width:none;width:100%;}
+    [data-bd-page][data-bd-wide] [data-bd-list]{grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}
 [data-bd-sec]{display:flex;flex-direction:column;gap:8px;}
 [data-bd-h]{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--dsw-alias-label-tertiary,#9aa0a6);}
 [data-bd-row]{display:flex;align-items:center;gap:10px;}
@@ -198,7 +200,7 @@ function WatchTab() {
   }
   const go = (d) => { const n = Math.max(0, Math.min(offset + d, Math.max(0, total - 1))); setOffset(n); load(st, tier, n) }
   const chip = (label, on, active) => h('button', { 'data-bd-chip': '', 'aria-selected': active ? 'true' : 'false', onClick: on }, label)
-  return h('div', { 'data-bd-page': '' },
+  return h('div', { 'data-bd-page': '', 'data-bd-wide': '' },
     h('div', { 'data-bd-row': '' },
       chip('全部', () => pick('state', ''), st === ''),
       chip('挑了', () => pick('state', 'picked'), st === 'picked'),
