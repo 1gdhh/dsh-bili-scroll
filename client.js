@@ -249,6 +249,10 @@ function WatchTab() {
       const [perRound, setPerRound] = React.useState(null)
       const [replyPer, setReplyPer] = React.useState(null)
       const [dmUid, setDmUid] = React.useState(null)        // 私信收件人 UID（本地草稿）
+      const [dmWatch, setDmWatch] = React.useState(null)          // 私信监听开关
+      const [dmWatchMin, setDmWatchMin] = React.useState(null)     // 每几分钟查一次
+      const [dmPerDay, setDmPerDay] = React.useState(null)         // 每天最多回几条
+      const [dmOwner, setDmOwner] = React.useState(null)           // 只回这个 UID
       const [dmMode, setDmMode] = React.useState(null)      // 投递方式：off / only / both
       const [mention, setMention] = React.useState(null)
       const [login, setLogin] = React.useState(null)
@@ -286,6 +290,10 @@ function WatchTab() {
         if (cfg && mention === null) setMention(cfg.mentionName || '')
         if (cfg && dmUid === null) setDmUid(cfg.dmUid ? String(cfg.dmUid) : '')
         if (cfg && dmMode === null) setDmMode(cfg.dmMode || 'only')
+        if (cfg && dmWatch === null) setDmWatch(Boolean(cfg.dmWatch))
+        if (cfg && dmWatchMin === null) setDmWatchMin(String(cfg.dmWatchMinutes ?? 5))
+        if (cfg && dmPerDay === null) setDmPerDay(String(cfg.dmReplyPerDay ?? 3))
+        if (cfg && dmOwner === null) setDmOwner(cfg.dmOwnerUid ? String(cfg.dmOwnerUid) : '')
         if (cfg && favId === null) setFavId(String(cfg.favFolderId ?? 0))
       }, [cfg])
 
@@ -646,6 +654,41 @@ function WatchTab() {
             }),
             h('div', { 'data-bd-note': '' }, '私信内容 = 本轮每条的「标题 + 链接 + 一句话」，一轮合并成一条发（不受 150 字限制）'),
             h('div', { 'data-bd-note': '' }, '⚠️ 建议先让这个号和收件人互关：B站 对「陌生人私信」会限流，还可能不弹提醒')) : null,
+          h('div', { 'data-bd-sep': '' }),
+          h(ToggleRow, {
+            label: '私信双向（有人私信它就回一句）',
+            note: '默认关。开了之后它每几分钟纯代码查一次私信（不花 token），只有你本人发来新消息时才回你一句；回复上限可设在下面。',
+            on: Boolean(dmWatch),
+            onChange: (v) => { setDmWatch(v); patch({ dmWatch: v }, '私信双向') },
+          }),
+          dmWatch ? h('div', { 'data-bd-sub': '' },
+            h('div', { 'data-bd-row': '' },
+              h('div', { 'data-bd-grow': '' },
+                h('div', { 'data-bd-label': '' }, '每几分钟查一次'),
+                h('div', { 'data-bd-note': '' }, '最小 3 分钟；查的时候不花 token')),
+              h('input', {
+                'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 3, max: 120,
+                value: dmWatchMin ?? '',
+                onChange: (e) => setDmWatchMin(e.target.value),
+                onBlur: () => { const n = Math.max(3, Math.min(120, Number(dmWatchMin) || 5)); setDmWatchMin(String(n)); patch({ dmWatchMinutes: n }, '查私信间隔') },
+              })),
+            h('div', { 'data-bd-row': '' },
+              h('div', { 'data-bd-grow': '' },
+                h('div', { 'data-bd-label': '' }, '每天最多回几条'),
+                h('div', { 'data-bd-note': '' }, '防止被刷；0 = 只读不回')),
+              h('input', {
+                'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 0, max: 20,
+                value: dmPerDay ?? '',
+                onChange: (e) => setDmPerDay(e.target.value),
+                onBlur: () => { const n = Math.max(0, Math.min(20, Number(dmPerDay) || 0)); setDmPerDay(String(n)); patch({ dmReplyPerDay: n }, '每天回几条') },
+              })),
+            h('div', { 'data-bd-label': '' }, '只回这个人（UID，留空 = 用上面那个私信收件人）'),
+            h('input', {
+              'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 0, value: dmOwner ?? '',
+              placeholder: '留空就跟上面「私信发给谁」保持一致',
+              onChange: (e) => setDmOwner(e.target.value),
+              onBlur: () => { const n = Math.max(0, Number(dmOwner) || 0); setDmOwner(n ? String(n) : ''); patch({ dmOwnerUid: n }, '只回谁') },
+            })) : null,
           h(ToggleRow, {
             label: '本地转写没字幕的视频',
             note: '默认关；开了以后，没字幕的视频会在本机转写一遍（不花 API 钱）',

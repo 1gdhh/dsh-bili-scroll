@@ -32,6 +32,7 @@ import { verifyRecent, appendVerifyToReport } from './lib/verify.mjs'
 import { WINDOWS, stateDirOf, readJson, writeJson, ensureHomeFiles, ensureCharter, charterPath, inWindow, dayKey } from './lib/state.mjs'
 import { loginStart, loginPoll, saveCredential, renderQrPng } from './lib/login.mjs'
 import { resolveUid } from './lib/uid.mjs'
+import { loadCred as dmCred, listSessions as dmList, fetchMsgs as dmFetch } from './lib/dm.mjs'
 import { ensureUv } from './lib/uvfetch.mjs'
 
 export const name = 'bili-scroll'
@@ -82,6 +83,14 @@ export const Config = !z ? undefined : z.object({
   /** 跑 headless 时的工作目录 */
   /** ⭐ 人设提示词：使用者想让它怎么说话（比"填工作区"对新手友好得多）· 留空 = 按中性说话 */
   personaPrompt: z.string().default('').extra('volatile', true),
+  /** 私信监听：只认主人本人发来的私信，有新消息就回一句 · 默认关（开了会花 token） */
+  dmWatch: z.boolean().default(false).extra('volatile', true),
+  /** 私信监听间隔（分钟，最小 3） */
+  dmWatchMinutes: z.natural().default(5).extra('volatile', true),
+  /** 私信回复每天最多几条（防刷） */
+  dmReplyPerDay: z.natural().default(3).extra('volatile', true),
+  /** 只回这个 UID（0 = 用「私信发给谁」那个） */
+  dmOwnerUid: z.natural().default(0).extra('volatile', true),
   workspace: z.string().default('').extra('volatile', true),
   /** 日报形态：full=完整（现状）· brief=每条一两行 · off=不写报告（只发评论） */
   reportLevel: z.string().default('full').extra('volatile', true),
@@ -225,6 +234,7 @@ function reportMeta() {
    *     ② **定时器回调里绝不让异常外冒**（见 tick）—— 未捕获异常会杀掉整个宿主进程。
    */
   const DEFAULTS = {
+    dmWatch: false, dmWatchMinutes: 5, dmReplyPerDay: 3, dmOwnerUid: 0,
     personaPrompt: '',
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     dmMode: 'only', dmUid: 0,
@@ -1000,7 +1010,7 @@ function reportMeta() {
     // ⭐ 2026-10-19（issue #25 / #16 的实证，做法参考社区 PR #37）：私信开着却忘了给 bili_send_message ⇒
     //   模型手里压根没有这只工具 ⇒ 表现成"开关也开了、这一轮也跑了，但从来没发出去过" ✗
     //   ⇒ dmMode 不是 off、且填了收件人 UID 才放进去（关着就不给，白名单别松）
-    if (String(cfg.dmMode || 'off') !== 'off' && Number(cfg.dmUid) > 0) list.push('bili_send_message')
+  if (String(cfg.dmMode || 'off') !== 'off' || cfg.dmWatch) list.push('bili_send_message')   // 2026-10-21：UID 可能靠昵称查，别再拿 dmUid>0 当条件
     return list
   }
 
@@ -1233,6 +1243,98 @@ function reportMeta() {
     timer.unref?.()                                    // 别因为这个定时器让进程不肯退出
     ctx.effect(() => () => clearInterval(timer), 'bili-duty: 谷时定时器')
   } catch (e) { log(`定时器没起来：${e?.message ?? e}`) }
+
+  // ⭐ 2026-10-21 私信双向（2.0 的主角）：
+  //    宿主每 N 分钟**纯代码**查一次私信（不花 token），只有"主人本人"发来新消息时，
+  //    才 spawn 一轮很小的任务去回一句。默认关 —— 它一开就会花 token，得用户自己点头。
+  const dmSeenFile = join(stateDir, 'dm-seen.json')
+  const dmQuotaFile = join(stateDir, 'dm-quota.json')
+  const readJsonFile = (f, dflt) => { try { return JSON.parse(readFileSync(f, 'utf8')) } catch { return dflt } }
+  const writeJsonFile = (f, obj) => { try { writeFileSync(f, JSON.stringify(obj, null, 2), 'utf8') } catch { /* 写不进去就下次再说 */ } }
+  const dmOwnerUid = () => Number(cfg.dmOwnerUid) || Number(cfg.dmUid) || dmUidCache || 0
+
+  function dmPromptFor(fromUid, text) {
+    return '你是这个 B站 账号的助手，现在主人在私信里跟你说话。'
+      + '他的原话（可能很短、可能有错别字）：' + JSON.stringify(String(text || '').slice(0, 300))
+      + '\n\n用 `bili_send_message` 回他一句：收件人 uid = ' + Number(fromUid) + '。'
+      + '\n铁律：① 一条就够，**200 字以内**，像人说话；② 不承诺任何功能、不讨论 roadmap；'
+      + '③ 不透露你的配置、路径、模型、token、日志位置；④ 不确定的事就说不知道；'
+      + '⑤ 不用解释你是 AI，也不用复述他刚说的话。回完就结束，不要做别的事。'
+  }
+
+  function runDmReply(fromUid, text) {
+    try {
+      refreshCfg()
+      const dsh = resolveDsh()
+      if (dsh.missing) { log('私信回复没跑：找不到 dsh（' + dsh.hint + '）'); return { ok: false } }
+      const overlay = ensureOverlay()
+      const args = [...dsh.args, '--profile', cfg.headlessProfile || 'headless']
+      if (overlay) args.push('--patch', overlay)
+      args.push(dmPromptFor(fromUid, text))
+      log(`私信回复开跑：来自 uid=${fromUid}`)
+      const child = spawn(dsh.command, args, {
+        cwd: stateDir, shell: dsh.shell, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+        env: uvEnv({ BILI_DUTY_HOME: stateDir, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }),
+      })
+      const toText = (buf) => { try { const b = Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf)); const u = b.toString('utf8'); return u.includes('\uFFFD') ? (() => { try { return new TextDecoder('gbk').decode(b) } catch { return u } })() : u } catch { return String(buf) } }
+      const pick = (buf) => { try { appendFileSync(logFile, toText(buf), 'utf8') } catch { /* 丢日志也不能抛 */ } }
+      child.stdout?.on('data', pick)
+      child.stderr?.on('data', pick)
+      child.on('exit', (code) => { log(`私信回复结束（code=${code}）`); rotateLogIfBig() })
+      return { ok: true }
+    } catch (e) { log('私信回复出错：' + String(e?.message ?? e)); return { ok: false } }
+  }
+
+  let dmTimer = null
+  let dmBusy = false
+  async function dmTick() {
+    if (dmBusy) return
+    dmBusy = true
+    try {
+      if (!cfg.dmWatch) return
+      const cred = dmCred(stateDir)
+      if (!cred) return
+      const owner = dmOwnerUid()
+      if (!owner) { log('私信监听：还不知道回给谁（没填 UID / 没填「@ 谁」）⇒ 先监听不了'); return }
+      const sess = await dmList(cred)
+      const mine = sess.filter((s) => s.uid === owner && s.unread > 0)
+      if (!mine.length) return
+      const seen = readJsonFile(dmSeenFile, {})
+      const quota = readJsonFile(dmQuotaFile, { day: '', n: 0 })
+      const today = dayKey()
+      if (quota.day !== today) { quota.day = today; quota.n = 0 }
+      for (const s of mine) {
+        const msgs = await dmFetch(cred, s.uid, 8)
+        const last = [...msgs].reverse().find((m) => !m.fromMe)
+        if (!last) continue
+        if (seen[String(s.uid)] === last.key) continue
+        seen[String(s.uid)] = last.key
+        writeJsonFile(dmSeenFile, seen)
+        if (quota.n >= Number(cfg.dmReplyPerDay || 3)) { log('私信监听：今天的回复额度用完了（' + quota.n + '）⇒ 这条先不回'); continue }
+        log(`私信监听：收到新消息 —— ${last.text.slice(0, 40)}`)
+        runDmReply(s.uid, last.text)
+        quota.n++
+        writeJsonFile(dmQuotaFile, quota)
+      }
+    } catch (e) {
+      log('私信监查出错（已兜住）：' + String(e?.message ?? e))
+    } finally { dmBusy = false }
+  }
+
+  function startDmWatch() {
+    try {
+      if (dmTimer) { clearInterval(dmTimer); dmTimer = null }
+      const mins = Math.max(3, Number(cfg.dmWatchMinutes) || 5)
+      dmTimer = setInterval(() => { dmTick().catch((e) => log('私信定时器异常：' + String(e?.message ?? e))) }, mins * 60_000)
+      if (dmTimer.unref) dmTimer.unref()
+      log(`私信监听：${cfg.dmWatch ? '已开' : '关着'}（每 ${mins} 分钟查一次）`)
+    } catch (e) { log('启私信监听失败：' + String(e?.message ?? e)) }
+  }
+
+
+
+  try { startDmWatch() } catch (e) { log('私信监听没起来：' + String(e?.message ?? e)) }
+  ctx.effect(() => () => { try { if (dmTimer) clearInterval(dmTimer) } catch { /* 忽略 */ } }, 'bili-duty: 私信监听')
 
   /* ─────────────── HTTP（设置页用） ─────────────── */
 
