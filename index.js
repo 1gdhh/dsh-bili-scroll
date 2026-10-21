@@ -1263,7 +1263,17 @@ function reportMeta() {
   const dmQuotaFile = join(stateDir, 'dm-quota.json')
   const readJsonFile = (f, dflt) => { try { return JSON.parse(readFileSync(f, 'utf8')) } catch { return dflt } }
   const writeJsonFile = (f, obj) => { try { writeFileSync(f, JSON.stringify(obj, null, 2), 'utf8') } catch { /* 写不进去就下次再说 */ } }
-  const dmOwnerUid = () => Number(cfg.dmOwnerUid) || Number(cfg.dmUid) || dmUidCache || 0
+  const dmOwnerUid = () => {
+    const direct = Number(cfg.dmOwnerUid) || Number(cfg.dmUid) || dmUidCache
+    if (direct > 0) return direct
+    // 2026-10-21：昵称之前查过（uid-cache.json）就直接用，不用等到"跑一轮"才有人查
+    try {
+      const cache = JSON.parse(readFileSync(join(stateDir, 'uid-cache.json'), 'utf8')) || {}
+      const name = String(cfg.mentionName || '').trim()
+      if (name && Number(cache[name]) > 0) return Number(cache[name])
+    } catch { /* 没有缓存就算了 */ }
+    return 0
+  }
 
   function dmPromptFor(fromUid, text) {
     const raw = String(text || '').slice(0, 600)
@@ -1324,6 +1334,10 @@ function reportMeta() {
       if (!cfg.dmWatch) return
       const cred = dmCred(stateDir)
       if (!cred) return
+      // 拿不到就先现查一次（之后走 uid-cache.json 的缓存，不再重复请求）
+      let ownerTry = dmOwnerUid()
+      if (!ownerTry && String(cfg.mentionName || '').trim()) ownerTry = await warmDmUid()
+      if (ownerTry > 0) dmUidCache = ownerTry
       const owner = dmOwnerUid()
       if (!owner) { log('私信监听：还不知道回给谁（没填 UID / 没填「@ 谁」）⇒ 先监听不了'); return }
       const sess = await dmList(cred)
