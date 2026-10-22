@@ -750,10 +750,30 @@ function reportMeta() {
   const runUpgrade = () => {
     if (upgrading) return { ok: true, busy: true, log: installLogFile, hint: '正在升级，别重复点' }
     upgrading = true
-    const spec = lastUpdateSource === 'github' ? 'github:c1overzz/dsh-bili-scroll' : 'dsh-bili-scroll'
-    appendInstall('\n=== ' + new Date().toISOString() + ' 开始升级（add ' + spec + '）===\n')
+    let spec = lastUpdateSource === 'github' ? 'github:c1overzz/dsh-bili-scroll' : 'dsh-bili-scroll'
     ;(async () => {
       try {
+      // ⭐ 2026-10-22（用户实证）：没装 git 的机器上 `add github:` 必失败（pnpm 要调 git ls-remote）
+      //    ⇒ 从 GitHub 升级时**直接取 Release 里的 tgz 直链**，https 下载，不需要 git ✓
+      if (lastUpdateSource === 'github') {
+        try {
+          const rr = await fetch('https://api.github.com/repos/c1overzz/dsh-bili-scroll/releases/latest', {
+            signal: AbortSignal.timeout(8000),
+            headers: { 'user-agent': 'dsh-bili-scroll', accept: 'application/vnd.github+json' },
+          })
+          if (rr.ok) {
+            const jj = await rr.json()
+            const tag = String(jj.tag_name || '').trim()
+            const ver = tag.replace(/^v/, '')
+            if (ver && ver !== myVersion()) {
+              const url = 'https://github.com/c1overzz/dsh-bili-scroll/releases/download/' + tag + '/dsh-bili-scroll-' + ver + '.tgz'
+              spec = url
+              appendInstall('（用 Release 的 tgz 直链：' + url + '）\n')
+            }
+          }
+        } catch (e) { appendInstall('（查 Release 直链没成功，退回 github: 装法）\n') }
+      }
+      appendInstall('\n=== ' + new Date().toISOString() + ' 开始升级（add ' + spec + '）===\n')
         const dsh = resolveDsh()
         // ⭐ 照抄那一轮的形状：resolveDsh 返回 { command, args, shell }
         //    （写错就退化成裸 'dsh'，而宿主 PATH 里常常没有它 ⇒ 静默失败）
@@ -1599,6 +1619,53 @@ function reportMeta() {
    *   ③ 「发给你了」只看状态里有没有"评论/私信"；状态写「收（值得看）」就不算 ✗
    *   ⇒ 现在：**日期允许带时间**、**BV 用扫描定位**、**已投递再看评论记录表里的 rpid** ✓
    */
+  /**
+   * ⭐ 2026-10-22（用户 @俺爱啃猪蹄子 提的）：`seen.md` 会越滚越大，而**每轮模型都要通读一遍** ⇒ 越跑越贵 ✗
+   *    ⇒ 30 天前的表格行挪进 `seen/YYYY-MM.md`（纯宿主代码、零 token），主表恒定为最近一个月 ✓
+   */
+  const rollSeen = () => {
+    const file = join(stateDir, 'seen.md')
+    try {
+      if (!existsSync(file)) return 0
+      const text = readFileSync(file, 'utf8')
+      const rows = text.split(/\r?\n/)
+      const cutoff = new Date(Date.now() - 30 * 86400_000)
+      const pad = (n) => String(n).padStart(2, '0')
+      const cutKey = cutoff.getFullYear() + '-' + pad(cutoff.getMonth() + 1) + '-' + pad(cutoff.getDate())
+      const keep = []
+      const moved = new Map()   // 月份 → 行数组
+      for (const raw of rows) {
+        const line = raw
+        const t = line.trim()
+        if (t.startsWith('|')) {
+          const cells = t.split('|').map((x) => x.trim()).slice(1, -1)
+          const bvIdx = cells.findIndex((x) => /^BV[0-9A-Za-z]{10}$/.test(x))
+          const dayRaw = bvIdx > 0 ? cells[bvIdx - 1] : cells[0]
+          const dm = /^(\d{4}-\d{2}-\d{2})/.exec(dayRaw || '')
+          if (bvIdx >= 0 && dm && dm[1] < cutKey) {
+            const month = dm[1].slice(0, 7)
+            if (!moved.has(month)) moved.set(month, [])
+            moved.get(month).push(line)
+            continue
+          }
+        }
+        keep.push(line)
+      }
+      if (!moved.size) return 0
+      const dir = join(stateDir, 'seen')
+      mkdirSync(dir, { recursive: true })
+      let n = 0
+      for (const [month, arr] of moved) {
+        const f = join(dir, month + '.md')
+        const head = existsSync(f) ? '' : '# 刷B站的判重表归档 · ' + month + '\n\n（从 seen.md 滚过来的旧行，判重只看最近 30 天，这里只为留档）\n\n'
+        appendFileSync(f, head + arr.join('\n') + '\n', 'utf8')
+        n += arr.length
+      }
+      writeFileSync(file, keep.join('\n'), 'utf8')
+      log('判重表归档：' + n + ' 行挪进 seen/（主表只剩最近 30 天）')
+      return n
+    } catch (e) { log('判重表归档失败（不影响使用）：' + String(e?.message ?? e)); return 0 }
+  }
   const parseSeenTable = () => {
     const file = join(stateDir, 'seen.md')
     let text = ''
@@ -1789,6 +1856,19 @@ function reportMeta() {
             + '或 Python 3.10+（安装时勾 Add to PATH），然后回来再点一次「装依赖」。'
           appendInstall(msg + '\n'); log(msg); installing = false; return
         }
+      // ⭐ 2026-10-22（群里 @俺爱啃猪蹄子 定位）：钉 3.12 那句一旦失败会退回 uv 默认（可能是 3.14/3.15），
+      //    而 venv 一旦建好就不再重建 ⇒ 每次装依赖都在 brotli/pyyaml 上编译失败，用户只能自己删目录 ✗
+      //    ⇒ 点「装主依赖」时先看现役环境是哪个版本，太高就改名换个新的（不删，留着回滚）✓
+      try {
+        const pyv = readFileSync(join(stateDir, '.venv', 'pyvenv.cfg'), 'utf8')
+        const mv = /version\s*=\s*(\d+)\.(\d+)/.exec(pyv)
+        if (mv && existsSync(venvPy) && Number(mv[2]) >= 14) {
+          const tagV = mv[1] + '.' + mv[2]
+          const bad = join(stateDir, '.venv.bad-' + tagV + '-' + Date.now())
+          appendInstall('当前环境是 Python ' + tagV + '（太高，brotli / pyyaml 没有现成的包）⇒ 改名重建 3.12\n')
+          try { renameSync(join(stateDir, '.venv'), bad) } catch (e2) { appendInstall('改名没成功：' + String(e2?.message ?? e2) + '\n') }
+        }
+      } catch { /* 没有 pyvenv.cfg 就算了 */ }
         if (!existsSync(venvPy)) {
           // ⭐ 2026-10-17（issue #8③）：ASR 那个环境带了 --seed，主环境却漏了 ⇒ uv 建的 venv 默认不含 pip，
           //    一旦镜像失败、回退 `python -m pip` 就是 `No module named pip` ⇒ 连补救的路都没有 ✗
@@ -1947,6 +2027,7 @@ function reportMeta() {
 
 
     if (req.method === 'GET' && path === '/api/bili-duty/status') {
+      try { rollSeen() } catch (e) { /* 归档失败不影响状态接口 */ }
       try { syncNotes() } catch (e) { /* 笔记失败不影响状态接口 */ }
       return sendJson(res, 200, status())
     }
