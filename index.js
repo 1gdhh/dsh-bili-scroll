@@ -1584,28 +1584,52 @@ function reportMeta() {
    */
   /* ─────────────── 「它刷过的视频」：数据层 + 封面代理 ─────────────── */
   /** seen.md 的表格一行一条：`| 日期 | bvid | 标题 | UP | 状态 |`（跳过的也记，理由写在状态里） */
+  /**
+   * seen.md 的表格一行一条：`| 日期 | bvid | 标题 | UP | 状态 |`（跳过的也记，理由写在状态里）
+   *
+   * ⭐ 2026-10-22（一位用户的 DSH 找出来的，谢谢）：原来的解析**太死**，三处会整行丢弃 ——
+   *   ① 日期只认 `YYYY-MM-DD`；实际记录常写成 `2026-10-22 18:51` ⇒ 每行都废 ✗
+   *   ② 位置写死（cells[1]=日期、cells[2]=BV）；标题里带 `|`、或列数不对就错位 ✗
+   *   ③ 「发给你了」只看状态里有没有"评论/私信"；状态写「收（值得看）」就不算 ✗
+   *   ⇒ 现在：**日期允许带时间**、**BV 用扫描定位**、**已投递再看评论记录表里的 rpid** ✓
+   */
   const parseSeenTable = () => {
     const file = join(stateDir, 'seen.md')
     let text = ''
     try { text = readFileSync(file, 'utf8') } catch { return [] }
     const out = []
     const seen = new Set()
+    // 评论记录表里的 rpid（形如 `| BVxxxx | 317831597441 | ...`）⇒ 这些视频**确实发出去过**
+    const deliveredBvs = new Set()
+    for (const raw of text.split(/\r?\n/)) {
+      const hit = /\|\s*(BV[0-9A-Za-z]{10})\s*\|\s*(\d{6,})\s*\|/.exec(raw)
+      if (hit) deliveredBvs.add(hit[1])
+    }
     for (const raw of text.split(/\r?\n/)) {
       const line = raw.trim()
       if (!line.startsWith('|')) continue
       const cells = line.split('|').map((s) => s.trim())
-      // 去掉首尾空段：["", 日期, bvid, 标题, UP, 状态, ""]
       const c = cells.slice(1, cells.length - 1)
-      if (c.length < 5) continue
-      const [day, bvid, title, up, status] = c
-      if (!/^BV[0-9A-Za-z]{10}$/.test(bvid)) continue          // 表头 / 分隔线 / 别的表格都跳过
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue
+      if (c.length < 3) continue
+      // ⭐ BV 用扫描定位，不再假设在第 2 列（标题里带竖线也不会错位）
+      const bvIdx = c.findIndex((x) => /^BV[0-9A-Za-z]{10}$/.test(x))
+      if (bvIdx < 0) continue
+      const bvid = c[bvIdx]
+      const dayRaw = bvIdx > 0 ? c[bvIdx - 1] : c[0]
+      // ⭐ 日期允许带时间：`2026-10-22` / `2026-10-22 18:51` / `2026-10-22T18:51`
+      const dm = /^(\d{4}-\d{2}-\d{2})(?:[ T]\d{2}:\d{2}(?::\d{2})?)?$/.exec(dayRaw)
+      if (!dm) continue
+      const day = dm[1]
+      const title = c[bvIdx + 1] || ''
+      const up = c[bvIdx + 2] || ''
+      const status = c[c.length - 1] || ''
       const key = bvid + '@' + day
-      if (seen.has(key)) continue                              // 同一天重复记的只留第一条
+      if (seen.has(key)) continue
       seen.add(key)
-      const picked = status.includes('挑了')
-      const commented = status.includes('评论')
-    const delivered = /评论|私信|已发/.test(status)   // 2026-10-21：2.0 起默认私信投递 ⇒ 「发过」不再只等于「评论过」
+      const skipped = /跳过|跳了|没挑/.test(status)
+      const picked = !skipped && /挑|收|选|值得看|可以看/.test(status)
+      const commented = /评论/.test(status)
+      const delivered = /评论|私信|已发|发给/.test(status) || deliveredBvs.has(bvid)
       out.push({ day, bvid, title, up, status, picked, commented, delivered, url: 'https://www.bilibili.com/video/' + bvid })
     }
     out.sort((a, b) => (a.day === b.day ? (a.picked === b.picked ? 0 : a.picked ? -1 : 1) : (a.day < b.day ? 1 : -1)))
