@@ -1843,6 +1843,8 @@ function reportMeta() {
       loggedIn: hasCredential(),
       venvReady: venvReadyNow(),
       version: myVersion(),
+      // 2026-10-22：缺哪个 Python 包装不上，得能一眼看出来（出不了二维码 =09 缺 qrcode）
+      missingDeps: (() => { try { return missingVenvDeps() } catch { return [] } })(),
       dmUidResolved: Number(cfg.dmUid) || dmUidCache || 0,
       // ⭐ 人设：老用户（只填过工作区）可以一键导入他那份 AGENTS.md
       personaFromWs: (() => {

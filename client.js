@@ -773,6 +773,9 @@ function WatchTab() {
               '手机 B站 → 我的 → 扫一扫。',
               h('br'),
               '确认时选「记住我 / 长期」那张 —— 选 24 小时的话，明天就得重扫。')) : null),
+          (Array.isArray(st.missingDeps) && st.missingDeps.length)
+            ? h('div', { 'data-bd-note': '' }, '还缺这几项：' + st.missingDeps.join(' / ') + '（qrcode = 画登录二维码用的）—— 点一次「重装主依赖」就会补上')
+            : null,
 
         /* ── 它是怎么干活的（给他看的） ── */
         h('div', { 'data-bd-sec': '', 'data-bd-group': 'adv', 'data-bd-away': tab === 'adv' ? undefined : '' },
